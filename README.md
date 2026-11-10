@@ -19,8 +19,26 @@ Yanxi does not turn every conversation into a lesson or an interview. Start talk
 - **Build a word list** — save only the words you want to keep and review them later.
 - **Continue old conversations** — reopen any conversation and carry on where you left off.
 - **Use it away from home without renting a server** — open a protected temporary address from your phone.
+- **Practise 10 languages** — switch the language you are learning without reinstalling or creating another workspace.
 - **Search when current information matters** — optional and off by default.
 - **Keep your data local** — conversations, settings, memories, and API keys stay on your computer.
+
+## Supported languages
+
+Yanxi currently supports 10 target languages:
+
+- English
+- Spanish
+- French
+- Japanese
+- German
+- Korean
+- Italian
+- Chinese
+- Portuguese
+- Hindi
+
+The interface is also available in Simplified Chinese, English, Latin American Spanish, French, Japanese, German, Korean, Italian, Brazilian Portuguese, and Hindi. The interface language and the language you are practising can be changed separately.
 
 ## Requirements
 
