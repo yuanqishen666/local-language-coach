@@ -1,0 +1,49 @@
+{
+  "name": "local-language-coach",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A local-first, open-source conversation practice app for adult language learners.",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node scripts/bootstrap.mjs start",
+    "dev": "node scripts/bootstrap.mjs dev",
+    "build": "node scripts/bootstrap.mjs build",
+    "doctor": "node scripts/doctor.mjs",
+    "internal:dev": "concurrently -k -n WEB,SERVER -c cyan,magenta \"vite\" \"tsx watch server/index.ts\"",
+    "internal:build": "pnpm clean:server && vite build && tsc -p tsconfig.server.json",
+    "internal:serve": "node dist/server/server/index.js",
+    "clean:server": "node --input-type=module -e \"import { rm } from 'node:fs/promises'; await rm('dist/server', { recursive: true, force: true })\"",
+    "app": "tsx cli/index.ts",
+    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "preview": "node scripts/bootstrap.mjs start --rebuild"
+  },
+  "dependencies": {
+    "@fastify/static": "^8.3.0",
+    "@fastify/websocket": "^11.2.0",
+    "@fontsource-variable/manrope": "^5.2.8",
+    "@fontsource-variable/noto-sans-sc": "^5.2.8",
+    "fastify": "^5.6.1",
+    "jsonrepair": "^3.15.0",
+    "nanoid": "^5.1.6",
+    "pinia": "^3.0.3",
+    "qrcode": "^1.5.4",
+    "vue": "^3.5.22",
+    "vue-i18n": "^11.1.12",
+    "vue-router": "^4.6.3",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/qrcode": "^1.5.6",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2",
+    "vue-tsc": "^3.1.4"
+  },
+  "packageManager": "pnpm@11.9.0"
+}

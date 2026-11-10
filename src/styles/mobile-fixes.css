@@ -1,0 +1,51 @@
+html, body, #app {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+@media (max-width: 740px) {
+  .conversation-shell {
+    width: 100vw;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .conversation-shell .conversation-head {
+    grid-template-columns: 38px minmax(0, 1fr) 72px;
+  }
+
+  .conversation-shell .conversation-body,
+  .conversation-shell .chat-column,
+  .conversation-shell .message-list {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .conversation-shell .composer {
+    width: 100%;
+    max-width: none;
+  }
+
+  .conversation-shell .message {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .conversation-shell .message-stack {
+    flex: 0 1 calc(100% - 42px);
+    width: calc(100% - 42px) !important;
+    min-width: 0;
+    max-width: calc(100% - 42px) !important;
+    overflow: hidden;
+  }
+
+  .conversation-shell .bubble,
+  .conversation-shell .coach-card {
+    width: 100%;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
