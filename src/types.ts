@@ -79,9 +79,22 @@ export interface MessageMeta {
     openedLoops: string[]
     resolvedLoops: string[]
     sceneFacts: string[]
-    userFacts: Array<{ key: string; value: string; quote: string; sensitive: boolean }>
+    userFacts: Array<{ key: string; value: string; quote: string; sensitive: boolean; memoryType?: string; topic?: string; importance?: number; suggestedTier?: 'core' | 'long_term' }>
   }
-  memoryCandidates?: Array<{ category: string; key: string; value: string; confidence: number; sensitive: boolean }>
+  memoryCandidates?: Array<{
+    category: string
+    key: string
+    value: string
+    confidence: number
+    sensitive: boolean
+    action: 'create' | 'update'
+    previousValue?: string
+    tier: 'core' | 'long_term'
+    memoryType: string
+    topic: string
+    importance: number
+    sourceMessageId: string
+  }>
 }
 
 export interface Message { id: string; role: 'user' | 'assistant'; content: string; meta: MessageMeta; clientMessageId?: string; status?: 'pending' | 'complete' | 'failed'; createdAt: string }

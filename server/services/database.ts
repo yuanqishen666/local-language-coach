@@ -65,13 +65,34 @@ db.exec(`
     category TEXT NOT NULL,
     key TEXT NOT NULL,
     value TEXT NOT NULL,
+    tier TEXT NOT NULL DEFAULT 'long_term',
+    memory_type TEXT NOT NULL DEFAULT 'preference',
+    topic TEXT NOT NULL DEFAULT 'general',
+    importance REAL NOT NULL DEFAULT 0.5,
+    pinned INTEGER NOT NULL DEFAULT 0,
     confidence REAL NOT NULL DEFAULT 1,
     sensitive INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'confirmed',
     source_conversation_id TEXT,
+    source_message_id TEXT,
+    supersedes_id TEXT,
+    valid_from TEXT,
+    valid_to TEXT,
+    last_used_at TEXT,
+    use_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(category, key)
+  );
+  CREATE TABLE IF NOT EXISTS memory_revisions (
+    id TEXT PRIMARY KEY,
+    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    previous_value TEXT,
+    next_value TEXT,
+    change_type TEXT NOT NULL,
+    source_conversation_id TEXT,
+    source_message_id TEXT,
+    created_at TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS translation_cache (
     cache_key TEXT PRIMARY KEY,
@@ -99,12 +120,39 @@ db.exec(`
   );
 `)
 
+function ensureMemoryColumn(name: string, definition: string) {
+  const columns = new Set((db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>).map((column) => column.name))
+  if (!columns.has(name)) db.exec(`ALTER TABLE memories ADD COLUMN ${name} ${definition}`)
+}
+
+// SQLite CREATE TABLE IF NOT EXISTS does not add columns to an existing local
+// database. These additive migrations keep every previously saved memory.
+ensureMemoryColumn('tier', "TEXT NOT NULL DEFAULT 'long_term'")
+ensureMemoryColumn('memory_type', "TEXT NOT NULL DEFAULT 'preference'")
+ensureMemoryColumn('topic', "TEXT NOT NULL DEFAULT 'general'")
+ensureMemoryColumn('importance', 'REAL NOT NULL DEFAULT 0.5')
+ensureMemoryColumn('pinned', 'INTEGER NOT NULL DEFAULT 0')
+ensureMemoryColumn('source_message_id', 'TEXT')
+ensureMemoryColumn('supersedes_id', 'TEXT')
+ensureMemoryColumn('valid_from', 'TEXT')
+ensureMemoryColumn('valid_to', 'TEXT')
+ensureMemoryColumn('last_used_at', 'TEXT')
+ensureMemoryColumn('use_count', 'INTEGER NOT NULL DEFAULT 0')
+
+db.exec(`
+  UPDATE memories SET valid_from = created_at WHERE valid_from IS NULL;
+  UPDATE memories SET memory_type = 'learning' WHERE category = 'learning' AND memory_type = 'preference';
+  UPDATE memories SET memory_type = 'episodic' WHERE category = 'scene' AND memory_type = 'preference';
+`)
+
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS messages_client_id_unique ON messages(conversation_id, client_message_id) WHERE client_message_id IS NOT NULL')
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS messages_reply_to_unique ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL')
 db.exec('CREATE INDEX IF NOT EXISTS translation_cache_accessed_index ON translation_cache(last_accessed DESC)')
 db.exec('CREATE INDEX IF NOT EXISTS ai_response_cache_accessed_index ON ai_response_cache(cache_type, last_accessed DESC)')
 db.exec('CREATE INDEX IF NOT EXISTS conversation_episodes_conversation_index ON conversation_episodes(conversation_id, created_at)')
 db.exec('CREATE INDEX IF NOT EXISTS web_lookup_cache_expiry_index ON web_lookup_cache(expires_at)')
+db.exec('CREATE INDEX IF NOT EXISTS memories_retrieval_index ON memories(status, sensitive, tier, topic, updated_at DESC)')
+db.exec('CREATE INDEX IF NOT EXISTS memory_revisions_memory_index ON memory_revisions(memory_id, created_at DESC)')
 export function rows<T>(statement: string, ...params: any[]): T[] {
   return db.prepare(statement).all(...params) as T[]
 }

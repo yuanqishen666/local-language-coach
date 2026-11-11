@@ -31,6 +31,32 @@ export const lookupDecisionSchema = z.object({
   }).nullable(),
 })
 
+/** Analysis that must happen before the model writes the conversational reply.
+ * Keeping this separate prevents reply fluency from crowding out language
+ * feedback and durable-memory extraction. */
+export const turnAnalysisSchema = z.object({
+  lookup: lookupDecisionSchema,
+  reconstruction: reconstructionSchema.nullable(),
+  corrections: z.array(correctionSchema),
+})
+
+export const memoryAnalysisSchema = z.object({
+  disposition: z.enum(['remember', 'ignore']),
+  userFacts: z.array(z.object({
+    key: z.string(),
+    value: z.string(),
+    quote: z.string(),
+    sensitive: z.boolean(),
+    memoryType: z.enum(['preference', 'constraint', 'profile', 'learning', 'episodic']),
+    topic: z.string(),
+    importance: z.number(),
+    suggestedTier: z.enum(['core', 'long_term']),
+  })),
+  replyType: z.enum(['casual', 'recommendation', 'planning', 'learning', 'factual', 'support', 'other']),
+  relevantTopics: z.array(z.string()),
+  relevantMemoryKeys: z.array(z.string()),
+})
+
 /** The only synchronous contract used for a conversation turn. */
 export const coachTurnSchema = z.object({
   roleReply: z.string(),

@@ -22,6 +22,9 @@ benchmarks/
 *.test.*
 *.spec.*
 *.snap
+!server/ai/*.test.ts
+!server/*.test.ts
+!src/*.test.ts
 coverage/
 .nyc_output/
 playwright-report/

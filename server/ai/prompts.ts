@@ -25,9 +25,67 @@ function interfaceLanguageStyle(config: AppConfig) {
 }
 
 function correctionRule(level: AppConfig['learning']['correctionLevel']) {
-  if (level === 'light') return 'Correct only errors that change or block meaning.'
-  if (level === 'intensive') return 'Give concise feedback on meaning, grammar, and clearly unnatural wording; at most 3 items.'
-  return 'Correct meaning errors and clearly unnatural wording; omit harmless minor issues; at most 2 items.'
+  if (level === 'light') return 'Correct wrong spelling or word choice, grammar, or phrasing only when it changes or blocks the intended meaning; at most 2 items.'
+  if (level === 'intensive') return 'Correct wrong spelling or word choice, grammar, unnatural local usage, and useful minor issues; at most 4 items.'
+  return 'Correct wrong spelling or word choice, clear grammar errors, and wording a native speaker clearly would not use here; omit harmless punctuation, capitalization, and conversational fragments; at most 3 items.'
+}
+
+export function turnAnalysisSystem(
+  config: AppConfig,
+  rescueRequired: boolean,
+  relevantMemories: Array<Record<string, unknown>> = [],
+) {
+  return [
+    'Analyze the latest learner turn before a conversation partner replies. Return only the structured analysis object. The recent dialogue is context; analyze and quote only the latest learner message.',
+    'Target language: ' + config.learning.targetLanguage + ' (' + config.learning.targetLanguageCode + '), learner level: ' + config.learning.proficiency + '. Feedback language: ' + uiLanguage(config) + '.',
+    'Relevant confirmed memories for this turn: ' + JSON.stringify(relevantMemories) + '.',
+    'Language feedback:',
+    '- Understanding what the learner probably meant is not a reason to omit an error. A nonexistent, misspelled, or wrong word that is guessable from context still requires a correction.',
+    '- ' + correctionRule(config.learning.correctionLevel),
+    '- For every applicable issue, original must be a short exact substring of the latest learner message. improved must be the natural replacement in the target language and include any article, preposition, or surrounding word needed so substituting it produces a natural sentence. explanation must be concise ' + uiLanguage(config) + '. Do not return an empty corrections array when an applicable issue exists.',
+    '- Use severity=meaning for a wrong or nonexistent word or an error that changes the intended meaning; severity=naturalness for clear grammar or idiom problems; use severity=minor only for genuinely minor intensive-level feedback.',
+    '- Do not correct acceptable speech fillers, dialect, deliberate style, proper names, or a natural short answer. Do not invent an error merely to provide feedback.',
+    '- reconstruction is reserved for a complete target-language rescue when the learner used the feedback language to fill a gap. Do not duplicate a reconstruction in corrections.',
+    rescueRequired
+      ? '- The latest turn contains feedback-language wording, so reconstruction is REQUIRED and must contain the learner’s complete intended target-language sentence.'
+      : '- No full-sentence rescue is required, so reconstruction must be null.',
+    'Lookup decision:',
+    '- Classify independently of whether lookup is enabled. Split every real information need or conversational intent into lookup.parts.',
+    '- Use reply for ordinary conversation, opinions, creative work, supplied-content analysis, and stable knowledge. Use lookup when correctness depends on the current date, mutable external state, an explicit request to check, or a learner-specified external location.',
+    '- Use clarify only when a missing identity, subject, or requested location prevents a useful answer. For lookup, query is one focused query of at most 128 characters. For reply or clarify, query is empty.',
+    '- A supplied URL, platform, account, post, channel, page, or file is a locator. locator.quote must be an exact substring of the latest message; preserve it and never substitute another location. locator is null when none was supplied.',
+    '- Each part needs the exact subject and one reason: stable, changing, user_requested, user_location, or unknown. action=reply requires every part needsLookup=false; action=lookup requires at least one needsLookup=true plus a query or locator.',
+    '- When the learner requests advice or recommendations and a relevant confirmed preference or constraint is supplied, incorporate it into the lookup subject and focused query. Do not add unrelated memories or let an older memory override the latest message.',
+  ].join('\n')
+}
+
+export function memoryAnalysisSystem(config: AppConfig, memories: Array<Record<string, unknown>>) {
+  const memoryCatalog = memories.slice(0, 100).map((memory) => ({
+    category: memory.category,
+    key: memory.key,
+    value: memory.value,
+    tier: memory.tier,
+    memoryType: memory.memoryType || memory.memory_type,
+    topic: memory.topic,
+    importance: memory.importance,
+    pinned: memory.pinned,
+  }))
+  return [
+    'Perform only durable user-memory analysis for the latest learner turn. Return the structured memory analysis object. The recent dialogue is context; every new fact must come from the latest learner message.',
+    'Feedback language: ' + uiLanguage(config) + '. Confirmed non-sensitive memory catalog: ' + JSON.stringify(memoryCatalog) + '.',
+    '- Set disposition=remember when the latest learner explicitly states a user-owned fact likely to help in a future conversation: a stable preference, recurring constraint, personal background, or a durable answer to the partner’s question. Words such as like, dislike, love, hate, prefer, usually, always, or their equivalents normally express durable preferences.',
+    '- A direct answer that chooses among options proposed by the partner is explicit. Use recent dialogue to resolve references such as “the quiet one”, but never copy a preference from the partner unless the learner actually adopts it.',
+    '- Grammar or spelling mistakes do not make a fact ineligible. A statement that the learner prefers quiet, uncrowded beaches with clear water MUST be disposition=remember with a non-empty userFacts array.',
+    '- Set disposition=ignore only for momentary moods, one-off actions, time-bound plans, hypotheticals, jokes, role-play details, facts about other people, or implications the learner did not state. disposition=remember requires at least one fact; disposition=ignore requires no facts.',
+    '- For each userFact, quote is a short exact substring of the latest message. Write key and value in ' + uiLanguage(config) + '. key names one stable semantic dimension and value combines compatible facets of that preference.',
+    '- When a new fact changes or extends the same dimension as a catalog item, copy that catalog key exactly so confirmation updates the existing memory rather than creating a duplicate. The latest explicit statement wins.',
+    '- memoryType is preference for likes and choices, constraint for hard requirements or prohibitions, profile for stable background or identity, learning for recurring language-learning needs, and episodic for a time-bound experience worth recalling later.',
+    '- topic is a short, reusable lower-case English label such as travel, food, work, family, learning, or communication. importance is 0 to 1 and measures future usefulness, not emotional intensity.',
+    '- suggestedTier=core only for a stable hard constraint, essential profile fact, explicit always/never instruction, or long-term learning goal that should be visible on nearly every turn. Ordinary interests and domain preferences are long_term. Sensitive facts must never be suggested as core.',
+    '- Mark health, belief, precise location, identity, finance, or similarly private facts sensitive. Return at most 3 facts.',
+    '- replyType classifies the response being prepared as casual, recommendation, planning, learning, factual, support, or other. relevantTopics contains short lower-case English topic labels useful for memory retrieval. These are soft retrieval signals, never hard filters.',
+    '- relevantMemoryKeys contains exact catalog keys that would materially help answer the latest turn. Match meaning across languages and synonyms. For advice or recommendations, include applicable preferences and constraints. Return no unrelated keys.',
+  ].join('\n')
 }
 
 export function coachSystem(
@@ -39,6 +97,7 @@ export function coachSystem(
   rescueRequired = false,
   dynamics: { consecutiveQuestionTurns: number; recentOpeners: string[]; recentOnlyAgreement: boolean } = { consecutiveQuestionTurns: 0, recentOpeners: [], recentOnlyAgreement: false },
   lookupDecision: TurnLookupDecision | null = null,
+  turnAnalysis: unknown = null,
 ) {
   const partner = setup
     ? {
@@ -65,6 +124,7 @@ export function coachSystem(
     'Current date and timezone: ' + new Date().toISOString() + ' / Asia/Shanghai.',
     'Ordinary web lookup is ' + (config.webLookup.enabled ? 'ENABLED' : 'DISABLED') + '. A locator explicitly written by the learner is a one-turn authorization even when ordinary lookup is disabled.',
     'Authoritative semantic lookup decision for the latest learner turn: ' + JSON.stringify(lookupDecision) + '. Copy this decision into lookup exactly; do not reclassify it while writing the conversational reply.',
+    'Authoritative pre-reply analysis: ' + JSON.stringify(turnAnalysis) + '. Use the corrected intent when replying and copy its reconstruction, corrections, and userFacts exactly. Do not silently discard them.',
     'Conversation rules:',
     '- First respond to the learner’s latest actual meaning. If they change topic, follow naturally. Never steer them back to an earlier topic just because it appeared in the setup.',
     '- Stay in the partner identity when one exists, but behave like a real person rather than a teacher, examiner, guide, or task manager.',
@@ -74,6 +134,7 @@ export function coachSystem(
     '- Never mention goals, steps, progress, completion, exercises, or what the learner should say next.',
     '- ' + targetLanguageStyle(config),
     '- Treat recent user statements as more authoritative than old summaries. If context is missing or conflicting, ask a short natural clarification instead of inventing a memory.',
+    '- Core memories are compact user-profile context that is always visible; obey applicable hard constraints but do not awkwardly mention unrelated profile facts. Retrieved long-term memories are turn-specific evidence. For advice and recommendations, apply relevant preferences and constraints. The latest learner statement always overrides an older memory. Never mention the memory system.',
     'Lookup decision rules:',
     '- Split the latest message into its real information needs. Stable advice, creative discussion, supplied-content analysis, greetings, and ordinary conversation use action=reply.',
     '- Use action=lookup only for information likely to have changed, an explicit request to look something up, or a user-specified external location. Do not use a keyword list and do not search merely because words such as today or current appear.',
@@ -111,7 +172,7 @@ export function lookupDecisionSystem(config: AppConfig) {
   ].join('\n')
 }
 
-export function lookupReplySystem(config: AppConfig, setup: ConversationSetup | null, material: unknown, originalDraft: unknown) {
+export function lookupReplySystem(config: AppConfig, setup: ConversationSetup | null, material: unknown, originalDraft: unknown, relevantMemories: unknown[] = []) {
   const outcome = material && typeof material === 'object' ? material as Record<string, unknown> : {}
   const draft = originalDraft && typeof originalDraft === 'object' ? originalDraft as Record<string, unknown> : {}
   const usableDraft = { reconstruction: draft.reconstruction, corrections: draft.corrections, statePatch: draft.statePatch, lookup: draft.lookup }
@@ -135,10 +196,12 @@ export function lookupReplySystem(config: AppConfig, setup: ConversationSetup | 
     'Partner: ' + JSON.stringify(setup || { role: 'friendly conversation partner' }) + '.',
     'Background material: ' + JSON.stringify(compactMaterial) + '.',
     'Earlier draft and coaching metadata: ' + JSON.stringify(usableDraft) + '.',
+    'Relevant confirmed user memories: ' + JSON.stringify(relevantMemories) + '.',
     'The learner must hear normal human conversation, never a research report.',
     '- Directly respond to the learner and preserve every named person, place, product, team, event, platform, and time range.',
     '- Stay on the learner’s latest subject. Do not tack on an earlier topic, scene goal, reminder, suggestion, or unrelated follow-up after answering.',
     '- Answer only the requested information type. Do not add adjacent roles, categories, recommendations, or trivia merely because they appear related.',
+    '- Apply relevant user preferences and constraints when choosing or explaining a recommendation. The latest learner message overrides older memory. Ignore unrelated memory and never mention the memory system.',
     '- Never say “according to search results”, “the evidence shows”, “sources”, “coverage”, “confidence”, or similar audit language. Do not include URLs, citations, footnotes, or source names.',
     '- If outcome kind is disabled, no lookup happened and any earlier factual draft was deliberately removed as unsafe. Naturally say you cannot check the changing part right now, never pretend you looked, and never present or calculate an unverified changing value as current. Still answer any stable parts.',
     '- If the exact thing was not found, naturally say you looked but did not see it. Ask where the learner saw it or invite them to send the link, screenshot, or text when that would help.',

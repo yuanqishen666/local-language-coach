@@ -157,16 +157,44 @@ export function selectRelevantMemories(
   latestUserMessage: string,
   currentTopic: string,
   limit = 4,
+  semanticKeys: string[] = [],
+  relevantTopics: string[] = [],
+  replyType = 'other',
 ) {
   const query = new Set(searchTerms(latestUserMessage + ' ' + currentTopic))
-  return memories.map((memory, index) => {
+  const selectedKeys = new Set(semanticKeys.map((key) => text(key)))
+  const selectedTopics = new Set(relevantTopics.map((topic) => text(topic).toLocaleLowerCase()).filter(Boolean))
+  const core = memories.filter((memory) => text(memory.tier) === 'core')
+    .sort((left, right) => {
+      const pinned = Number(right.pinned || 0) - Number(left.pinned || 0)
+      if (pinned) return pinned
+      const importance = Number(right.importance || 0.5) - Number(left.importance || 0.5)
+      if (importance) return importance
+      return text(right.updatedAt).localeCompare(text(left.updatedAt))
+    })
+    .slice(0, 15)
+  const coreIds = new Set(core.map((memory) => text(memory.id) || `${text(memory.category)}:${text(memory.key)}`))
+  const routed = memories.map((memory, index) => {
+    if (text(memory.tier) === 'core') return { memory, score: 0 }
     const category = text(memory.category)
-    const body = text(memory.key) + ' ' + text(memory.value)
+    const key = text(memory.key)
+    const memoryType = text(memory.memoryType || memory.memory_type)
+    const topic = text(memory.topic).toLocaleLowerCase()
+    const body = key + ' ' + text(memory.value) + ' ' + topic
     const relevance = overlapScore(query, body) * 4
-    const learningBoost = category === 'learning' ? 1 : 0
-    const recency = Math.max(0, 1 - index * 0.08)
-    return { memory, score: relevance + learningBoost + recency }
-  }).sort((a, b) => b.score - a.score).slice(0, limit).map((item) => item.memory)
+    const semanticMatch = selectedKeys.has(key) ? 100 : 0
+    const topicMatch = topic && selectedTopics.has(topic) ? 12 : 0
+    const matched = relevance > 0 || semanticMatch > 0 || topicMatch > 0
+    const learningBoost = matched && (replyType === 'learning' && (memoryType === 'learning' || category === 'learning')) ? 3 : 0
+    const decisionBoost = matched && ['recommendation', 'planning'].includes(replyType) && ['preference', 'constraint'].includes(memoryType) ? 2 : 0
+    const importanceBoost = matched ? Math.max(0, Math.min(1, Number(memory.importance) || 0.5)) : 0
+    const recency = matched ? Math.max(0, 1 - index * 0.08) : 0
+    return { memory, score: semanticMatch + topicMatch + relevance + learningBoost + decisionBoost + importanceBoost + recency }
+  }).filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((item) => item.memory)
+  return [...core, ...routed.filter((memory) => !coreIds.has(text(memory.id) || `${text(memory.category)}:${text(memory.key)}`))]
 }
 
 export function selectRecentHistory(

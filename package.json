@@ -17,6 +17,7 @@
     "internal:serve": "node dist/server/server/index.js",
     "clean:server": "node --input-type=module -e \"import { rm } from 'node:fs/promises'; await rm('dist/server', { recursive: true, force: true })\"",
     "app": "tsx cli/index.ts",
+    "test": "tsx --test server/ai/*.test.ts server/*.test.ts src/*.test.ts",
     "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "preview": "node scripts/bootstrap.mjs start --rebuild"
   },

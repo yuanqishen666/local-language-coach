@@ -3,8 +3,8 @@ import { getConfig } from '../services/config.js'
 import { getModelClient, ProviderRequestError } from './provider.js'
 import type { ModelClient, ModelMessage } from './provider.js'
 import { parseModelJson } from '../utils/json.js'
-import { coachSystem, episodeSummarySystem, lookupDecisionSystem, lookupReplySystem, lookupSystem, repairReplySystem, setupCandidatesSystem, translationSystem } from './prompts.js'
-import { coachTurnSchema, episodeSummarySchema, lookupDecisionSchema, responseJsonSchema, setupCandidatesSchema, termLookupSchema, translationSchema } from './schemas.js'
+import { coachSystem, episodeSummarySystem, lookupReplySystem, lookupSystem, memoryAnalysisSystem, repairReplySystem, setupCandidatesSystem, translationSystem, turnAnalysisSystem } from './prompts.js'
+import { coachTurnSchema, episodeSummarySchema, memoryAnalysisSchema, responseJsonSchema, setupCandidatesSchema, termLookupSchema, translationSchema, turnAnalysisSchema } from './schemas.js'
 import type { CoachingResponse, ConversationEpisode, ConversationSetup, ConversationState, TurnLookupDecision } from '../types.js'
 import { normalizeUiLocale } from '../../shared/locales.js'
 import {
@@ -153,6 +153,60 @@ export function normalizeCoachResponse(value: unknown) {
   }
 }
 
+export function normalizeTurnAnalysis(value: unknown, latestUser: string) {
+  const source = record(value)
+  const reconstruction = record(source.reconstruction)
+  const reconstructionType = text(reconstruction.type)
+  return {
+    lookup: normalizeLookupDecision(source.lookup),
+    reconstruction: source.reconstruction && text(reconstruction.improved)
+      ? {
+          type: (['completion', 'translation', 'correction', 'optional'].includes(reconstructionType) ? reconstructionType : 'correction') as 'completion' | 'translation' | 'correction' | 'optional',
+          original: text(reconstruction.original),
+          improved: text(reconstruction.improved),
+          explanation: text(reconstruction.explanation),
+        }
+      : null,
+    corrections: (Array.isArray(source.corrections) ? source.corrections : []).map((item) => {
+      const correction = record(item)
+      const severity = text(correction.severity)
+      return {
+        original: text(correction.original),
+        improved: text(correction.improved),
+        explanation: text(correction.explanation),
+        severity: (['meaning', 'naturalness', 'minor'].includes(severity) ? severity : 'naturalness') as 'meaning' | 'naturalness' | 'minor',
+      }
+    }).filter((item) => item.original && latestUser.includes(item.original) && item.improved && item.improved !== item.original),
+  }
+}
+
+export function normalizeMemoryAnalysis(value: unknown, latestUser: string, memoryKeys: string[]) {
+  const source = record(value)
+  const allowedMemoryKeys = new Set(memoryKeys.map((key) => text(key)).filter(Boolean))
+  const replyType = text(source.replyType)
+  return {
+    disposition: text(source.disposition) === 'remember' ? 'remember' as const : 'ignore' as const,
+    userFacts: (Array.isArray(source.userFacts) ? source.userFacts : []).map((item) => {
+      const fact = record(item)
+      const memoryType = text(fact.memoryType)
+      const sensitive = Boolean(fact.sensitive)
+      return {
+        key: text(fact.key),
+        value: text(fact.value),
+        quote: text(fact.quote),
+        sensitive,
+        memoryType: (['preference', 'constraint', 'profile', 'learning', 'episodic'].includes(memoryType) ? memoryType : 'profile') as 'preference' | 'constraint' | 'profile' | 'learning' | 'episodic',
+        topic: text(fact.topic, 'general').toLocaleLowerCase().slice(0, 40),
+        importance: Math.max(0, Math.min(1, Number(fact.importance) || 0.5)),
+        suggestedTier: (!sensitive && text(fact.suggestedTier) === 'core' ? 'core' : 'long_term') as 'core' | 'long_term',
+      }
+    }).filter((item) => item.key && item.value && item.quote && latestUser.includes(item.quote)).slice(0, 3),
+    replyType: (['casual', 'recommendation', 'planning', 'learning', 'factual', 'support', 'other'].includes(replyType) ? replyType : 'other') as 'casual' | 'recommendation' | 'planning' | 'learning' | 'factual' | 'support' | 'other',
+    relevantTopics: strings(source.relevantTopics).map((topic) => topic.toLocaleLowerCase().slice(0, 40)).slice(0, 8),
+    relevantMemoryKeys: strings(source.relevantMemoryKeys).filter((key) => allowedMemoryKeys.has(key)).slice(0, 8),
+  }
+}
+
 function questionOnly(value: string) {
   const parts = value.split(/(?<=[.!?。！？])|\n+/u).map((part) => part.trim()).filter(Boolean)
   return Boolean(parts.length && parts.every((part) => /[?？]\s*$/u.test(part)))
@@ -246,37 +300,81 @@ interface CoachTurnInput {
   state: ConversationState
 }
 
-export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: CoachingResponse; context: { tight: boolean; recentMessages: number; episodes: number; memories: number } }> {
+export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: CoachingResponse; context: { tight: boolean; recentMessages: number; episodes: number; memories: number; memoryIds: string[] } }> {
   const config = await getConfig()
   const client = await getModelClient()
   const provider = selectedProvider(config)
   const latestUser = [...input.messages].reverse().find((message) => message.role === 'user')?.content || ''
   const rescueRequired = requiresInterfaceLanguageRescue(latestUser, config.ui.locale, config.learning.targetLanguageCode)
-  const lookupDecision = await generateStructured(client, [
-    { role: 'system', content: lookupDecisionSystem(config) },
-    { role: 'user', content: latestUser },
+  const memoryCatalog = input.memories.slice(0, 100)
+  const memoryKeys = memoryCatalog.map((memory) => text(memory.key)).filter(Boolean)
+  const analysisHistory = selectRecentHistory(input.messages, 1_400, 4)
+  let memoryAnalysis = normalizeMemoryAnalysis({}, latestUser, memoryKeys)
+  try {
+    memoryAnalysis = await generateStructured(client, [
+      { role: 'system', content: memoryAnalysisSystem(config, memoryCatalog) },
+      ...analysisHistory,
+    ], {
+      name: 'memory_analysis',
+      schema: memoryAnalysisSchema,
+      hint: '{"disposition":"ignore","userFacts":[],"replyType":"casual","relevantTopics":[],"relevantMemoryKeys":[]}',
+      temperature: 0,
+      attempts: 2,
+      maxOutputTokens: Math.min(provider.maxOutputTokens, 800),
+      retryHint: 'Return the complete memory analysis JSON including replyType and relevantTopics. Explicit durable likes, dislikes, preferences, recurring constraints, and personal background require disposition=remember and at least one grounded fact. Copy matching catalog keys exactly.',
+      normalize: (value) => normalizeMemoryAnalysis(value, latestUser, memoryKeys),
+      usable: (value) => value.disposition === 'remember' ? value.userFacts.length > 0 : value.userFacts.length === 0,
+    })
+  } catch (error) {
+    if (!(error instanceof ProviderRequestError) || !repairableOutputCodes.has(error.code)) throw error
+    // Memory extraction is valuable but auxiliary. A malformed memory-analysis
+    // response must not discard an otherwise answerable conversation turn.
+  }
+  const analysisRelevantMemories = selectRelevantMemories(
+    input.memories,
+    latestUser,
+    input.state.currentTopic,
+    4,
+    memoryAnalysis.relevantMemoryKeys,
+    memoryAnalysis.relevantTopics,
+    memoryAnalysis.replyType,
+  )
+  const turnAnalysis = await generateStructured(client, [
+    { role: 'system', content: turnAnalysisSystem(config, rescueRequired, analysisRelevantMemories) },
+    ...analysisHistory,
   ], {
-    name: 'lookup_decision',
-    schema: lookupDecisionSchema,
-    hint: '{"action":"reply","parts":[{"text":"learner intent","needsLookup":false,"reason":"stable","subject":"exact subject"}],"query":"","locator":null}',
+    name: 'turn_analysis',
+    schema: turnAnalysisSchema,
+    hint: '{"lookup":{"action":"reply","parts":[{"text":"learner intent","needsLookup":false,"reason":"stable","subject":"exact subject"}],"query":"","locator":null},"reconstruction":null,"corrections":[]}',
     temperature: 0,
     attempts: 2,
-    maxOutputTokens: Math.min(provider.maxOutputTokens, 700),
-    retryHint: 'Return only the complete lookup decision JSON. Include every intent in parts. Apply the current-date and mutable-external-state principle before choosing reply or lookup.',
-    normalize: normalizeLookupDecision,
+    maxOutputTokens: provider.maxOutputTokens,
+    retryHint: 'Return the complete language-and-lookup analysis JSON. Recheck the latest learner message for guessable spelling or word-choice errors and every information need. Keep explanations concise.',
+    normalize: (value) => normalizeTurnAnalysis(value, latestUser),
     usable: (value) => Boolean(
-      value.parts.length > 0 &&
-      value.parts.every((part) => part.subject && (part.reason !== 'unknown' || value.action === 'clarify')) &&
-      (value.action !== 'lookup' || (value.parts.some((part) => part.needsLookup) && (value.query || value.locator))) &&
-      (value.action !== 'reply' || value.parts.every((part) => !part.needsLookup)),
+      value.lookup.parts.length > 0 &&
+      value.lookup.parts.every((part) => part.subject && (part.reason !== 'unknown' || value.lookup.action === 'clarify')) &&
+      (value.lookup.action !== 'lookup' || (value.lookup.parts.some((part) => part.needsLookup) && (value.lookup.query || value.lookup.locator))) &&
+      (value.lookup.action !== 'reply' || value.lookup.parts.every((part) => !part.needsLookup)) &&
+      (!rescueRequired || value.reconstruction),
     ),
   })
+  const lookupDecision = turnAnalysis.lookup
 
   const run = async (tight: boolean) => {
     const relevantEpisodes = selectRelevantEpisodes(input.episodes, latestUser, input.state.currentTopic, tight ? 2 : 4)
-    const relevantMemories = selectRelevantMemories(input.memories, latestUser, input.state.currentTopic, tight ? 2 : 4)
+    const relevantMemories = selectRelevantMemories(
+      input.memories,
+      latestUser,
+      input.state.currentTopic,
+      tight ? 2 : 4,
+      memoryAnalysis.relevantMemoryKeys,
+      memoryAnalysis.relevantTopics,
+      memoryAnalysis.replyType,
+    )
     const dynamics = analyzeRecentDialogue(input.messages)
-    const system = coachSystem(config, input.setup, relevantMemories, input.state, relevantEpisodes, rescueRequired, dynamics, lookupDecision)
+    const authoritativeAnalysis = { ...turnAnalysis, ...memoryAnalysis }
+    const system = coachSystem(config, input.setup, relevantMemories, input.state, relevantEpisodes, rescueRequired, dynamics, lookupDecision, authoritativeAnalysis)
     const historyBudget = Math.max(900, providerInputBudget(provider, tight) - approximateTokens(system) - 180)
     const history = selectRecentHistory(input.messages, historyBudget, tight ? 6 : 10)
     const generated = await generateStructured(client, [
@@ -297,6 +395,9 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
       normalize(value) {
         const normalized = normalizeCoachResponse(value)
         normalized.lookup = lookupDecision
+        normalized.reconstruction = turnAnalysis.reconstruction
+        normalized.corrections = turnAnalysis.corrections
+        normalized.statePatch.userFacts = memoryAnalysis.userFacts
         return normalized
       },
       usable: (value) => Boolean(
@@ -360,7 +461,7 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
         ? 'FINAL CONTENT CONSTRAINT: lookup was disabled and no lookup happened. Do not state or calculate the requested current value. Say naturally that you cannot check it right now, while keeping any stable conversational reaction.'
         : 'FINAL CONTENT CONSTRAINT: use only the supplied lookup outcome for changing facts. Keep it conversational and do not expose URLs, citations, source names, or research-report language.'
       finalGenerated = await generateStructured(client, [
-        { role: 'system', content: lookupReplySystem(config, input.setup, outcome, output.generated) },
+        { role: 'system', content: lookupReplySystem(config, input.setup, outcome, output.generated, output.relevantMemories) },
         { role: 'user', content: latestUser },
         { role: 'system', content: finalLookupConstraint },
       ], {
@@ -379,20 +480,31 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
 
   const issues = naturalReplyIssues(finalGenerated.roleReply, input.messages, lookupUsed)
   if (issues.length && !preserveGroundedText) {
-    finalGenerated = await generateStructured(client, [
-      { role: 'system', content: repairReplySystem(config, issues, finalGenerated) },
-      { role: 'user', content: latestUser },
-    ], {
-      name: 'repair_coach_turn',
-      schema: coachTurnSchema,
-      hint: '{"roleReply":"natural reply","reconstruction":null,"corrections":[],"lookup":{"action":"reply","parts":[],"query":"","locator":null},"statePatch":{"currentTopic":"","openedLoops":[],"resolvedLoops":[],"sceneFacts":[],"userFacts":[]}}',
-      temperature: 0.25,
-      attempts: 2,
-      maxOutputTokens: provider.maxOutputTokens,
-      normalize: normalizeCoachResponse,
-      usable: (value) => Boolean(value.roleReply.trim() && naturalReplyIssues(value.roleReply, input.messages, lookupUsed).length === 0 && (!rescueRequired || value.reconstruction)),
-    })
+    try {
+      finalGenerated = await generateStructured(client, [
+        { role: 'system', content: repairReplySystem(config, issues, finalGenerated) },
+        { role: 'user', content: latestUser },
+      ], {
+        name: 'repair_coach_turn',
+        schema: coachTurnSchema,
+        hint: '{"roleReply":"natural reply","reconstruction":null,"corrections":[],"lookup":{"action":"reply","parts":[],"query":"","locator":null},"statePatch":{"currentTopic":"","openedLoops":[],"resolvedLoops":[],"sceneFacts":[],"userFacts":[]}}',
+        temperature: 0.25,
+        attempts: 2,
+        maxOutputTokens: provider.maxOutputTokens,
+        normalize: normalizeCoachResponse,
+        usable: (value) => Boolean(value.roleReply.trim() && naturalReplyIssues(value.roleReply, input.messages, lookupUsed).length === 0 && (!rescueRequired || value.reconstruction)),
+      })
+    } catch {
+      // Repair is a best-effort polish. A provider formatting failure here must
+      // not discard an already valid conversational turn and its coaching data.
+    }
   }
+
+  // Rewrites and provider-native lookup presentations are allowed to change
+  // the spoken reply, never the independently verified coaching metadata.
+  finalGenerated.reconstruction = turnAnalysis.reconstruction
+  finalGenerated.corrections = turnAnalysis.corrections
+  finalGenerated.statePatch.userFacts = memoryAnalysis.userFacts
 
   return {
     coaching: {
@@ -410,6 +522,7 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
       recentMessages: output.history.length,
       episodes: output.relevantEpisodes.length,
       memories: output.relevantMemories.length,
+      memoryIds: output.relevantMemories.map((memory) => text(memory.id)).filter(Boolean),
     },
   }
 }

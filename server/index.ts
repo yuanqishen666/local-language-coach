@@ -354,7 +354,13 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
     const setup = setupForConversation(conversation)
     const initialState = normalizeConversationState(safeJson(conversation.state_json, null), setup)
     const compacted = await compactOlderMessages(request.params.id, messageRows, initialState)
-    const memories = rows<Record<string, unknown>>('SELECT category, key, value FROM memories WHERE status = ? AND sensitive = 0 ORDER BY updated_at DESC', 'confirmed')
+    const memories = rows<Record<string, unknown>>(`SELECT id, category, key, value, tier,
+      memory_type AS memoryType, topic, importance, pinned, confidence, sensitive, status,
+      source_conversation_id AS sourceConversationId, source_message_id AS sourceMessageId,
+      last_used_at AS lastUsedAt, use_count AS useCount, created_at AS createdAt, updated_at AS updatedAt
+      FROM memories
+      WHERE status = ? AND sensitive = 0 AND (valid_to IS NULL OR valid_to > ?)
+      ORDER BY CASE WHEN tier = 'core' THEN 0 ELSE 1 END, pinned DESC, importance DESC, updated_at DESC`, 'confirmed', now)
     let turn
     try {
       turn = await coachTurn({
@@ -378,18 +384,36 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
       assistantMessageId: assistantId,
       assistantCreatedAt: replyAt,
     })
-    result.memoryCandidates = merged.userFacts.map((fact) => ({
-      category: 'personal' as const,
-      key: fact.key,
-      value: fact.value,
-      confidence: 1,
-      sensitive: fact.sensitive,
-    }))
+    result.memoryCandidates = merged.userFacts.map((fact) => {
+      const existingMemory = memories.find((memory) => memory.key === fact.key)
+      const memoryType = fact.memoryType || 'profile'
+      const category = existingMemory?.category === 'learning' || existingMemory?.category === 'scene' || existingMemory?.category === 'personal'
+        ? existingMemory.category
+        : memoryType === 'learning' ? 'learning' : memoryType === 'episodic' ? 'scene' : 'personal'
+      const suggestedTier = fact.sensitive ? 'long_term' : fact.suggestedTier || 'long_term'
+      return {
+        category: category as 'personal' | 'learning' | 'scene',
+        key: fact.key,
+        value: fact.value,
+        confidence: 1,
+        sensitive: fact.sensitive,
+        action: existingMemory ? 'update' as const : 'create' as const,
+        tier: existingMemory?.tier === 'core' ? 'core' as const : suggestedTier,
+        memoryType,
+        topic: fact.topic || 'general',
+        importance: Math.max(0, Math.min(1, fact.importance ?? 0.5)),
+        sourceMessageId: userId,
+        ...(existingMemory ? { previousValue: String(existingMemory.value || '') } : {}),
+      }
+    })
     db.exec('BEGIN IMMEDIATE')
     try {
       db.prepare('INSERT INTO messages (id, conversation_id, role, content, meta_json, reply_to_message_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(assistantId, request.params.id, 'assistant', result.roleReply, JSON.stringify(result), userId, 'complete', replyAt)
       db.prepare('UPDATE messages SET status = ? WHERE id = ?').run('complete', userId)
       db.prepare("UPDATE conversations SET status = 'active', archived_at = NULL, state_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(merged.state), replyAt, request.params.id)
+      for (const memoryId of new Set(turn.context.memoryIds)) {
+        db.prepare('UPDATE memories SET use_count = use_count + 1, last_used_at = ? WHERE id = ?').run(replyAt, memoryId)
+      }
       db.exec('COMMIT')
     } catch (error) {
       db.exec('ROLLBACK')
@@ -507,21 +531,144 @@ app.post<{ Params: { id: string }; Body: { rating: 1 | 2 | 3 | 4 } }>('/api/revi
   return { dueAt: due, intervalDays: interval }
 })
 
-app.get('/api/memories', async () => rows('SELECT id, category, key, value, confidence, sensitive, status, source_conversation_id AS sourceConversationId, created_at AS createdAt, updated_at AS updatedAt FROM memories ORDER BY updated_at DESC'))
+const CORE_MEMORY_LIMIT = 15
+const memoryCategories = new Set(['personal', 'learning', 'scene'])
+const memoryTypes = new Set(['preference', 'constraint', 'profile', 'learning', 'episodic'])
 
-app.post<{ Body: { category: string; key: string; value: string; confidence?: number; sensitive?: boolean; status?: string; sourceConversationId?: string } }>('/api/memories', async (request) => {
-  const id = nanoid(); const now = new Date().toISOString(); const body = request.body
-  db.prepare(`INSERT INTO memories (id, category, key, value, confidence, sensitive, status, source_conversation_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(category, key) DO UPDATE SET value=excluded.value, confidence=excluded.confidence, sensitive=excluded.sensitive, status=excluded.status, source_conversation_id=excluded.source_conversation_id, updated_at=excluded.updated_at`).run(id, body.category, body.key, body.value, body.confidence ?? 1, body.sensitive ? 1 : 0, body.status || 'confirmed', body.sourceConversationId || null, now, now)
-  return { id }
+function cleanMemoryTopic(value: unknown) {
+  const topic = typeof value === 'string' ? value.trim().toLocaleLowerCase() : ''
+  return topic.slice(0, 40) || 'general'
+}
+
+function assertCoreMemoryAvailable(existing?: Record<string, any>) {
+  if (existing?.tier === 'core') return
+  const count = row<{ count: number }>("SELECT COUNT(*) AS count FROM memories WHERE tier = 'core' AND status = 'confirmed'")?.count || 0
+  if (count >= CORE_MEMORY_LIMIT) {
+    throw Object.assign(new Error(`Core memory is limited to ${CORE_MEMORY_LIMIT} items. Demote one first.`), { statusCode: 409, code: 'CORE_MEMORY_LIMIT' })
+  }
+}
+
+function addMemoryRevision(memoryId: string, previousValue: string | null, nextValue: string | null, changeType: string, sourceConversationId?: string | null, sourceMessageId?: string | null) {
+  db.prepare(`INSERT INTO memory_revisions
+    (id, memory_id, previous_value, next_value, change_type, source_conversation_id, source_message_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    nanoid(), memoryId, previousValue, nextValue, changeType, sourceConversationId || null, sourceMessageId || null, new Date().toISOString(),
+  )
+}
+
+app.get('/api/memories', async () => rows<Record<string, any>>(`SELECT id, category, key, value, tier,
+  memory_type AS memoryType, topic, importance, pinned, confidence, sensitive, status,
+  source_conversation_id AS sourceConversationId, source_message_id AS sourceMessageId,
+  supersedes_id AS supersedesId, valid_from AS validFrom, valid_to AS validTo,
+  last_used_at AS lastUsedAt, use_count AS useCount, created_at AS createdAt, updated_at AS updatedAt
+  FROM memories
+  ORDER BY CASE WHEN tier = 'core' THEN 0 ELSE 1 END, pinned DESC, importance DESC, updated_at DESC`).map((memory) => ({
+    ...memory,
+    pinned: Boolean(memory.pinned),
+    sensitive: Boolean(memory.sensitive),
+  })))
+
+app.post<{ Body: {
+  category: string; key: string; value: string; confidence?: number; sensitive?: boolean; status?: string
+  sourceConversationId?: string; sourceMessageId?: string; tier?: 'core' | 'long_term'; memoryType?: string; topic?: string; importance?: number
+} }>('/api/memories', async (request) => {
+  const body = request.body
+  const category = memoryCategories.has(body.category) ? body.category : 'personal'
+  const key = body.key?.trim()
+  const value = body.value?.trim()
+  if (!key || !value) throw Object.assign(new Error('Memory key and value are required.'), { statusCode: 400 })
+  const existing = row<Record<string, any>>('SELECT * FROM memories WHERE category = ? AND key = ?', category, key)
+  const sensitive = body.sensitive === undefined ? Boolean(existing?.sensitive) : Boolean(body.sensitive)
+  const requestedTier = body.tier || existing?.tier || 'long_term'
+  const tier = requestedTier === 'core' && !sensitive ? 'core' : 'long_term'
+  if (tier === 'core') assertCoreMemoryAvailable(existing)
+  const existingMemoryType = existing?.memory_type
+  const memoryType = memoryTypes.has(body.memoryType || '')
+    ? body.memoryType!
+    : memoryTypes.has(existingMemoryType) ? existingMemoryType : category === 'learning' ? 'learning' : category === 'scene' ? 'episodic' : 'profile'
+  const importance = Math.max(0, Math.min(1, Number(body.importance ?? existing?.importance ?? 0.5)))
+  const confidence = Number.isFinite(body.confidence) ? body.confidence! : existing?.confidence ?? 1
+  const topic = cleanMemoryTopic(body.topic ?? existing?.topic)
+  const sourceConversationId = body.sourceConversationId ?? existing?.source_conversation_id ?? null
+  const sourceMessageId = body.sourceMessageId ?? existing?.source_message_id ?? null
+  const status = body.status || existing?.status || 'confirmed'
+  const now = new Date().toISOString()
+  const id = existing?.id || nanoid()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    if (existing) {
+      addMemoryRevision(id, existing.value, value, existing.value === value ? 'metadata' : 'update', sourceConversationId, sourceMessageId)
+      db.prepare(`UPDATE memories SET value = ?, tier = ?, memory_type = ?, topic = ?, importance = ?, pinned = ?, confidence = ?, sensitive = ?,
+        status = ?, source_conversation_id = ?, source_message_id = ?, valid_to = NULL, updated_at = ? WHERE id = ?`).run(
+        value, tier, memoryType, topic, importance, tier === 'core' ? existing.pinned : 0, confidence, sensitive ? 1 : 0,
+        status, sourceConversationId, sourceMessageId, now, id,
+      )
+    } else {
+      db.prepare(`INSERT INTO memories
+        (id, category, key, value, tier, memory_type, topic, importance, pinned, confidence, sensitive, status,
+          source_conversation_id, source_message_id, valid_from, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        id, category, key, value, tier, memoryType, topic, importance, confidence,
+        sensitive ? 1 : 0, status, sourceConversationId, sourceMessageId, now, now, now,
+      )
+      addMemoryRevision(id, null, value, 'create', sourceConversationId, sourceMessageId)
+    }
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+  return { id, action: existing ? 'update' : 'create' }
 })
 
-app.put<{ Params: { id: string }; Body: { value: string; status?: string } }>('/api/memories/:id', async (request) => { db.prepare('UPDATE memories SET value = ?, status = COALESCE(?, status), updated_at = ? WHERE id = ?').run(request.body.value, request.body.status || null, new Date().toISOString(), request.params.id); return { ok: true } })
-app.delete<{ Params: { id: string } }>('/api/memories/:id', async (request) => { db.prepare('DELETE FROM memories WHERE id = ?').run(request.params.id); return { ok: true } })
+app.put<{ Params: { id: string }; Body: { value: string; status?: string } }>('/api/memories/:id', async (request) => {
+  const existing = row<Record<string, any>>('SELECT * FROM memories WHERE id = ?', request.params.id)
+  if (!existing) throw Object.assign(new Error('Memory not found'), { statusCode: 404 })
+  const value = request.body.value?.trim()
+  if (!value) throw Object.assign(new Error('Memory value is required.'), { statusCode: 400 })
+  const now = new Date().toISOString()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    addMemoryRevision(existing.id, existing.value, value, 'edit', existing.source_conversation_id, existing.source_message_id)
+    db.prepare('UPDATE memories SET value = ?, status = COALESCE(?, status), updated_at = ? WHERE id = ?').run(value, request.body.status || null, now, request.params.id)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+  return { ok: true }
+})
+
+app.patch<{ Params: { id: string }; Body: { tier: 'core' | 'long_term' } }>('/api/memories/:id/tier', async (request) => {
+  const existing = row<Record<string, any>>('SELECT * FROM memories WHERE id = ?', request.params.id)
+  if (!existing) throw Object.assign(new Error('Memory not found'), { statusCode: 404 })
+  if (!['core', 'long_term'].includes(request.body.tier)) throw Object.assign(new Error('Invalid memory tier'), { statusCode: 400 })
+  if (request.body.tier === 'core' && existing.sensitive) throw Object.assign(new Error('Sensitive memories cannot be placed in core memory.'), { statusCode: 409, code: 'SENSITIVE_CORE_MEMORY' })
+  if (request.body.tier === 'core') assertCoreMemoryAvailable(existing)
+  if (existing.tier === request.body.tier) return { ok: true }
+  const now = new Date().toISOString()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    addMemoryRevision(existing.id, existing.value, existing.value, request.body.tier === 'core' ? 'promote' : 'demote', existing.source_conversation_id, existing.source_message_id)
+    db.prepare('UPDATE memories SET tier = ?, pinned = ?, updated_at = ? WHERE id = ?').run(request.body.tier, request.body.tier === 'core' ? 1 : 0, now, request.params.id)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+  return { ok: true }
+})
+
+app.delete<{ Params: { id: string } }>('/api/memories/:id', async (request) => {
+  const result = db.prepare('DELETE FROM memories WHERE id = ?').run(request.params.id)
+  if (!result.changes) throw Object.assign(new Error('Memory not found'), { statusCode: 404 })
+  return { ok: true }
+})
 
 app.get('/api/export', async () => ({
-  format: 'local-language-coach-backup', version: 1, exportedAt: new Date().toISOString(),
+  format: 'local-language-coach-backup', version: 2, exportedAt: new Date().toISOString(),
   config: await getConfig(),
-  conversations: rows('SELECT * FROM conversations'), messages: rows('SELECT * FROM messages'), episodes: rows('SELECT * FROM conversation_episodes'), words: rows('SELECT * FROM word_entries'), memories: rows('SELECT * FROM memories'),
+  conversations: rows('SELECT * FROM conversations'), messages: rows('SELECT * FROM messages'), episodes: rows('SELECT * FROM conversation_episodes'), words: rows('SELECT * FROM word_entries'), memories: rows('SELECT * FROM memories'), memoryRevisions: rows('SELECT * FROM memory_revisions'),
 }))
 
 const webRoot = path.resolve(process.cwd(), 'dist/web')

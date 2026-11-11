@@ -79,7 +79,29 @@ export interface CoachingResponse {
     value: string
     confidence: number
     sensitive: boolean
+    action: 'create' | 'update'
+    previousValue?: string
+    tier: MemoryTier
+    memoryType: MemoryType
+    topic: string
+    importance: number
+    sourceMessageId: string
   }>
+}
+
+export type MemoryTier = 'core' | 'long_term'
+export type MemoryType = 'preference' | 'constraint' | 'profile' | 'learning' | 'episodic'
+export type MemoryReplyType = 'casual' | 'recommendation' | 'planning' | 'learning' | 'factual' | 'support' | 'other'
+
+export interface MemoryFact {
+  key: string
+  value: string
+  quote: string
+  sensitive: boolean
+  memoryType?: MemoryType
+  topic?: string
+  importance?: number
+  suggestedTier?: MemoryTier
 }
 
 export interface ConversationSetup {
@@ -149,7 +171,7 @@ export interface ConversationStatePatch {
   openedLoops: string[]
   resolvedLoops: string[]
   sceneFacts: string[]
-  userFacts: Array<{ key: string; value: string; quote: string; sensitive: boolean }>
+  userFacts: MemoryFact[]
 }
 
 export interface ConversationEpisode {

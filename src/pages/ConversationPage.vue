@@ -98,6 +98,10 @@ async function send() {
 function openLookup(term: string, sentence: string) { lookup.value = { open: true, term, sentence } }
 async function saveMemory(item: NonNullable<MessageMeta['memoryCandidates']>[number]) {
   await api.post('/memories', { ...item, status: 'confirmed', sourceConversationId: route.params.id })
+  for (const message of conversation.value?.messages || []) {
+    if (!message.meta.memoryCandidates) continue
+    message.meta.memoryCandidates = message.meta.memoryCandidates.filter((candidate) => candidate !== item)
+  }
   store.notify(t('conversation.memorySaved'))
 }
 function formatDate(value: string) {
