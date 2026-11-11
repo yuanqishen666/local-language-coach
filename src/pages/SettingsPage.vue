@@ -31,6 +31,12 @@ type ProviderTestResult = {
   capability: ProviderCapability;
   certificationToken: string;
 };
+type ProviderModelOption = {
+  id: string;
+  displayName: string;
+  contextWindowTokens?: number;
+  maxOutputTokens?: number;
+};
 const store = useAppStore();
 const route = useRoute();
 const router = useRouter();
@@ -47,9 +53,8 @@ const result = ref<Record<string, string>>({});
 const verified = ref<Record<string, string>>({});
 const testedCapability = ref<Record<string, ProviderCapability>>({});
 const certificationTokens = ref<Record<string, string>>({});
-const availableModels = ref<Record<string, string[]>>({});
-const manualModels = ref<Record<string, boolean>>({});
-const modelBeforeEdit = ref<Record<string, string>>({});
+const modelDiscoveryTokens = ref<Record<string, string>>({});
+const availableModels = ref<Record<string, ProviderModelOption[]>>({});
 const keys = ref<Record<string, string>>({});
 const providerDrafts = ref<Provider[]>([]);
 const providerBaselines = ref<Record<string, string>>({});
@@ -178,19 +183,11 @@ function providerOverrides(provider: any) {
 function rememberModelProfile(provider: Provider, model = provider.model) {
   rememberProviderModelProfile(provider, model);
 }
-function activateModel(provider: Provider, rawModel: string, previousModel = provider.model) {
-  switchProviderModel(provider, rawModel, previousModel);
+function activateModel(provider: Provider, rawModel: string) {
+  const official = availableModels.value[provider.id]?.find((model) => model.id === rawModel);
+  if (!official) return;
+  switchProviderModel(provider, official.id, provider.model, official);
   invalidateProvider(provider.id);
-}
-function beginManualModelEdit(provider: Provider) {
-  modelBeforeEdit.value[provider.id] = provider.model;
-  rememberModelProfile(provider);
-}
-function finishManualModelEdit(provider: Provider) {
-  const previousModel = modelBeforeEdit.value[provider.id] ?? provider.model;
-  const nextModel = provider.model;
-  delete modelBeforeEdit.value[provider.id];
-  activateModel(provider, nextModel, previousModel);
 }
 function updateActiveModelProfile(provider: Provider) {
   rememberModelProfile(provider);
@@ -199,10 +196,16 @@ function updateActiveModelProfile(provider: Provider) {
 function hasModelList(provider: Provider) {
   return Boolean(availableModels.value[provider.id]?.length);
 }
-function modelChoices(provider: Provider) {
-  const current = provider.model.trim();
-  const models = availableModels.value[provider.id] || [];
-  return current && !models.includes(current) ? [current, ...models] : models;
+function modelsLoaded(provider: Provider) {
+  return Object.hasOwn(availableModels.value, provider.id);
+}
+function currentModelIsOfficial(provider: Provider) {
+  return Boolean(availableModels.value[provider.id]?.some((model) => model.id === provider.model));
+}
+function modelLabel(model: ProviderModelOption) {
+  return model.displayName && model.displayName !== model.id
+    ? `${model.displayName} · ${model.id}`
+    : model.id;
 }
 function invalidateProvider(id: string) {
   delete verified.value[id];
@@ -267,6 +270,7 @@ function friendlyError(error: unknown) {
     PROVIDER_NOT_FOUND: "settings.errorNotFound",
     PROVIDER_INVALID_REQUEST: "settings.errorInvalidRequest",
     PROVIDER_LOOKUP_UNSUPPORTED: "settings.errorLookupUnsupported",
+    MODEL_NOT_DISCOVERED: "settings.errorModelRefreshRequired",
   };
   return error.code && messages[error.code] ? t(messages[error.code]) : t("common.operationFailed");
 }
@@ -318,11 +322,13 @@ async function saveProvider(provider: any) {
       modelProfiles: provider.modelProfiles,
       capability: testedCapability.value[provider.id] || provider.capability,
       certificationToken: certificationTokens.value[provider.id],
+      modelDiscoveryToken: modelDiscoveryTokens.value[provider.id],
     });
     keys.value[provider.id] = "";
     delete verified.value[provider.id];
     delete testedCapability.value[provider.id];
     delete certificationTokens.value[provider.id];
+    delete modelDiscoveryTokens.value[provider.id];
     await store.load();
     syncProviderDraft(provider.id);
     defaultProvider.value = store.settings?.llm.defaultProvider || "";
@@ -352,13 +358,15 @@ async function test(provider: any) {
 async function loadModels(provider: any) {
   loadingModels.value = provider.id;
   result.value[provider.id] = "";
+  delete availableModels.value[provider.id];
+  delete modelDiscoveryTokens.value[provider.id];
   try {
-    const data = await api.post<{ models: string[] }>(
+    const data = await api.post<{ models: ProviderModelOption[]; discoveryToken: string }>(
       `/providers/${provider.id}/models`,
       providerOverrides(provider),
     );
     availableModels.value[provider.id] = data.models;
-    if (data.models.length) manualModels.value[provider.id] = false;
+    modelDiscoveryTokens.value[provider.id] = data.discoveryToken;
     result.value[provider.id] = data.models.length
       ? "✓ " + t("settings.modelsFound", { count: data.models.length })
       : "× " + t("settings.noModels");
@@ -550,40 +558,26 @@ onMounted(loadRemote);
             </header>
             <div class="provider-fields">
               <div class="field model-field">
-                <div class="field-label-row">
-                  <label :for="`model-${provider.id}`">{{ t('settings.modelName') }}</label>
-                  <button
-                    v-if="hasModelList(provider)"
-                    type="button"
-                    class="text-action"
-                    @click="manualModels[provider.id] = !manualModels[provider.id]"
-                  >
-                    {{ manualModels[provider.id] ? t('settings.chooseFromModels') : t('settings.enterModelManually') }}
-                  </button>
-                </div>
+                <label :for="`model-${provider.id}`">{{ t('settings.modelName') }}</label>
                 <select
-                  v-if="hasModelList(provider) && !manualModels[provider.id]"
                   :id="`model-${provider.id}`"
                   :value="provider.model"
+                  :disabled="!hasModelList(provider)"
                   @change="activateModel(provider, ($event.target as HTMLSelectElement).value)"
                 >
-                  <option disabled value="">{{ t('settings.chooseModel') }}</option>
+                  <option v-if="!provider.model" disabled value="">{{ t('settings.chooseModel') }}</option>
                   <option
-                    v-for="model in modelChoices(provider)"
-                    :key="model"
-                    :value="model"
-                  >{{ model }}</option>
+                    v-if="provider.model && !currentModelIsOfficial(provider)"
+                    disabled
+                    :value="provider.model"
+                  >{{ provider.model }}</option>
+                  <option
+                    v-for="model in availableModels[provider.id] || []"
+                    :key="model.id"
+                    :value="model.id"
+                  >{{ modelLabel(model) }}</option>
                 </select>
-                <input
-                  v-else
-                  :id="`model-${provider.id}`"
-                  v-model="provider.model"
-                  :placeholder="t('settings.modelNamePlaceholder')"
-                  @focus="beginManualModelEdit(provider)"
-                  @input="invalidateProvider(provider.id)"
-                  @change="finishManualModelEdit(provider)"
-                />
-                <small>{{ hasModelList(provider) ? t('settings.modelListHelp', { count: availableModels[provider.id].length }) : t('settings.modelDiscoveryHelp') }}</small>
+                <small>{{ modelsLoaded(provider) ? (hasModelList(provider) ? t('settings.modelListHelp', { count: availableModels[provider.id].length }) : t('settings.noModels')) : t('settings.modelDiscoveryHelp') }}</small>
               </div>
               <div v-if="provider.apiKeySecret" class="field api-key">
                 <label>{{ t('settings.apiKey') }}</label
@@ -971,24 +965,6 @@ onMounted(loadRemote);
 }
 .provider-fields .api-key {
   grid-column: 1/-1;
-}
-.field-label-row {
-  min-height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.text-action {
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--green);
-  font-size: 11px;
-  font-weight: 680;
-}
-.text-action:hover {
-  text-decoration: underline;
 }
 .model-field small {
   line-height: 1.5;

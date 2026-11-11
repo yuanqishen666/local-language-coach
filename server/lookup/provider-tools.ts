@@ -216,7 +216,7 @@ export function parseAnthropicSearch(json: Record<string, any>): ProviderLookupR
 async function searchAnthropic(provider: ProviderConfig, key: string, input: ProviderSearchInput) {
   const json = await requestJson(`${provider.baseUrl.replace(/\/$/u, '')}/messages`, {
     method: 'POST',
-    headers: { 'x-api-key': key, 'anthropic-version': '2026-10-21', 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${key}`, 'anthropic-version': '2026-10-21', 'content-type': 'application/json' },
     body: JSON.stringify(anthropicSearchBody(provider, naturalSearchPrompt(input), input.domain)),
   }, input.timeoutMs)
   return parseAnthropicSearch(json)

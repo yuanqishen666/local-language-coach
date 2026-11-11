@@ -31,11 +31,25 @@ export interface ProviderTestOverrides {
   model?: string
 }
 
+export interface ProviderModelOption {
+  id: string
+  displayName: string
+  contextWindowTokens?: number
+  maxOutputTokens?: number
+}
+
 export const STRUCTURED_CONTRACT_VERSION = 6
 
 const pendingCertifications = new Map<string, {
   providerId: string
   capability: ProviderCapability
+  keyHash: string
+  expiresAt: number
+}>()
+
+const pendingModelDiscoveries = new Map<string, {
+  providerId: string
+  modelIds: Set<string>
   keyHash: string
   expiresAt: number
 }>()
@@ -49,6 +63,18 @@ export async function consumeProviderCertification(providerId: string, token: st
   pendingCertifications.delete(token)
   if (!pending || pending.expiresAt < Date.now() || pending.providerId !== providerId) return false
   if (JSON.stringify(pending.capability) !== JSON.stringify(capability)) return false
+  const config = await getConfig()
+  const provider = config.providers.find((item) => item.id === providerId)
+  if (!provider) return false
+  const secrets = await getSecrets()
+  const key = enteredKey.trim() || (provider.apiKeySecret ? secrets[provider.apiKeySecret] || '' : '')
+  return Boolean(key && secretHash(key) === pending.keyHash)
+}
+
+export async function consumeProviderModelDiscovery(providerId: string, token: string, model: string, enteredKey = '') {
+  const pending = pendingModelDiscoveries.get(token)
+  pendingModelDiscoveries.delete(token)
+  if (!pending || pending.expiresAt < Date.now() || pending.providerId !== providerId || !pending.modelIds.has(model)) return false
   const config = await getConfig()
   const provider = config.providers.find((item) => item.id === providerId)
   if (!provider) return false
@@ -295,7 +321,7 @@ function anthropicClient(provider: ProviderConfig, key: string, config: AppConfi
     async generate(messages, options = {}) {
       const response = await fetchWithRetry(`${provider.baseUrl.replace(/\/$/, '')}/messages`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2026-10-21' },
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${key}`, 'anthropic-version': '2026-10-21' },
         body: JSON.stringify(buildAnthropicBody(provider, config, messages, options, outputMode)),
       }, options)
       const json = await checkedJson(response)
@@ -482,11 +508,11 @@ export async function listProviderModels(providerId: string, overrides: Provider
   let response: Response
 
   if (provider.kind === 'anthropic') {
-    response = await fetchWithRetry(`${baseUrl}/models`, {
-      headers: { 'x-api-key': key, 'anthropic-version': '2026-10-21' },
+    response = await fetchWithRetry(`${baseUrl}/models?limit=1000`, {
+      headers: { authorization: `Bearer ${key}`, 'anthropic-version': '2026-10-21' },
     }, { timeoutMs: 15_000, retries: 0 })
   } else if (provider.kind === 'gemini') {
-    response = await fetchWithRetry(`${baseUrl}/models`, {
+    response = await fetchWithRetry(`${baseUrl}/models?pageSize=1000`, {
       headers: { 'x-goog-api-key': key },
     }, { timeoutMs: 15_000, retries: 0 })
   } else {
@@ -496,11 +522,54 @@ export async function listProviderModels(providerId: string, overrides: Provider
   }
 
   const json = await checkedJson(response)
-  const rawModels = provider.kind === 'gemini'
-    ? (json.models || []).filter((item: any) => !item.supportedGenerationMethods || item.supportedGenerationMethods.includes('generateContent')).map((item: any) => item.name)
-    : (json.data || json.models || []).map((item: any) => typeof item === 'string' ? item : item.id || item.name)
-  const models = [...new Set<string>(rawModels.filter(Boolean).map((model: string) => model.replace(/^models\//, '')))].sort()
-  return { models: models.slice(0, 500) }
+  const models = normalizeProviderModelOptions(provider, json)
+  const discoveryToken = randomUUID()
+  pendingModelDiscoveries.set(discoveryToken, {
+    providerId,
+    modelIds: new Set(models.map((model) => model.id)),
+    keyHash: secretHash(key),
+    expiresAt: Date.now() + 10 * 60_000,
+  })
+  return { models, discoveryToken }
+}
+
+function positiveInteger(value: unknown) {
+  const number = Number(value)
+  return Number.isInteger(number) && number > 0 ? number : undefined
+}
+
+export function normalizeProviderModelOptions(
+  provider: Pick<ProviderConfig, 'kind'>,
+  response: Record<string, any>,
+): ProviderModelOption[] {
+  const source = provider.kind === 'gemini' ? response.models : response.data || response.models
+  if (!Array.isArray(source)) return []
+  const seen = new Set<string>()
+  const models: ProviderModelOption[] = []
+  for (const item of source) {
+    const record = typeof item === 'string' ? { id: item } : item
+    if (!record || typeof record !== 'object') continue
+    if (provider.kind === 'gemini' && Array.isArray(record.supportedGenerationMethods) &&
+      !record.supportedGenerationMethods.includes('generateContent')) continue
+    if (provider.kind === 'anthropic' && record.lifecycle && record.lifecycle !== 'active') continue
+    const id = String(record.id || record.name || '').replace(/^models\//, '').trim()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    const contextWindowTokens = positiveInteger(
+      record.context_window ?? record.context_length ?? record.inputTokenLimit ?? record.max_input_tokens,
+    )
+    const maxOutputTokens = positiveInteger(
+      record.max_output_tokens ?? record.outputTokenLimit ?? record.max_tokens,
+    )
+    models.push({
+      id,
+      displayName: String(record.display_name || record.displayName || record.name || id).replace(/^models\//, '').trim() || id,
+      ...(contextWindowTokens ? { contextWindowTokens } : {}),
+      ...(maxOutputTokens ? { maxOutputTokens } : {}),
+    })
+    if (models.length >= 500) break
+  }
+  return models
 }
 
 export async function assertModelConfigured() {

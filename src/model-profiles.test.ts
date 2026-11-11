@@ -38,3 +38,19 @@ test('switching models keeps separate token budgets for each model', () => {
   assert.equal(draft.contextWindowTokens, 64_000)
   assert.equal(draft.maxOutputTokens, 2_000)
 })
+
+test('a newly selected model starts with limits from the official model list', () => {
+  const draft = provider()
+
+  switchProviderModel(draft, 'model-b', draft.model, {
+    contextWindowTokens: 200_000,
+    maxOutputTokens: 8_192,
+  })
+
+  assert.equal(draft.contextWindowTokens, 200_000)
+  assert.equal(draft.maxOutputTokens, 8_192)
+  assert.deepEqual(draft.modelProfiles?.['model-b'], {
+    contextWindowTokens: 200_000,
+    maxOutputTokens: 8_192,
+  })
+})

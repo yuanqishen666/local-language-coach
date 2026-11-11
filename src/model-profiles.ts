@@ -17,12 +17,13 @@ export function switchProviderModel(
   provider: Provider,
   rawModel: string,
   previousModel = provider.model,
+  officialProfile: Partial<{ contextWindowTokens: number; maxOutputTokens: number }> = {},
 ) {
   const model = rawModel.trim()
   rememberProviderModelProfile(provider, previousModel)
   provider.model = model
   const profile = model ? provider.modelProfiles?.[model] : undefined
-  provider.contextWindowTokens = profile?.contextWindowTokens ?? DEFAULT_CONTEXT_WINDOW
-  provider.maxOutputTokens = profile?.maxOutputTokens ?? DEFAULT_OUTPUT_LIMIT
+  provider.contextWindowTokens = profile?.contextWindowTokens ?? officialProfile.contextWindowTokens ?? DEFAULT_CONTEXT_WINDOW
+  provider.maxOutputTokens = profile?.maxOutputTokens ?? officialProfile.maxOutputTokens ?? DEFAULT_OUTPUT_LIMIT
   rememberProviderModelProfile(provider)
 }

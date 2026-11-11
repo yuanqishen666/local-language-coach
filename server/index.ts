@@ -12,7 +12,7 @@ import { safeJson } from './utils/json.js'
 import { lookupCacheKey } from './utils/ai-cache-key.js'
 import { translationCacheKey } from './utils/translation-cache.js'
 import { coachTurn, lookupTerm, suggestSetups, summarizeEpisode, translateMessage } from './ai/engine.js'
-import { assertModelConfigured, consumeProviderCertification, listProviderModels, STRUCTURED_CONTRACT_VERSION, testProvider } from './ai/provider.js'
+import { assertModelConfigured, consumeProviderCertification, consumeProviderModelDiscovery, listProviderModels, STRUCTURED_CONTRACT_VERSION, testProvider } from './ai/provider.js'
 import type { AppConfig, ConversationEpisode, ConversationSetup, ProviderCapability, ProviderModelProfile } from './types.js'
 import type { ProviderTestOverrides } from './ai/provider.js'
 import { emptyConversationState, extractiveEpisodeFallback, mergeConversationState, normalizeConversationSetup, normalizeConversationState, type StoredConversationMessage } from './ai/context.js'
@@ -179,11 +179,30 @@ function parseModelProfiles(value: unknown) {
   return profiles
 }
 
-app.put<{ Params: { id: string }; Body: { apiKey?: string; model?: string; enabled?: boolean; contextWindowTokens?: number; maxOutputTokens?: number; modelProfiles?: Record<string, ProviderModelProfile>; capability?: ProviderCapability; certificationToken?: string } }>('/api/providers/:id', async (request) => {
+app.put<{ Params: { id: string }; Body: { apiKey?: string; model?: string; enabled?: boolean; contextWindowTokens?: number; maxOutputTokens?: number; modelProfiles?: Record<string, ProviderModelProfile>; capability?: ProviderCapability; certificationToken?: string; modelDiscoveryToken?: string } }>('/api/providers/:id', async (request) => {
   const current = await getConfig()
   const provider = current.providers.find((item) => item.id === request.params.id)
   if (!provider) throw Object.assign(new Error('Provider not found'), { statusCode: 404 })
   const previousModel = provider.model
+  const enteredKey = typeof request.body.apiKey === 'string' ? request.body.apiKey.trim() : ''
+  const requestedModel = typeof request.body.model === 'string' ? request.body.model.trim() : previousModel
+  if (!requestedModel || requestedModel.length > 200 || ['__proto__', 'prototype', 'constructor'].includes(requestedModel)) {
+    throw Object.assign(new Error('Choose a valid model before saving'), { statusCode: 400 })
+  }
+  if (requestedModel !== previousModel) {
+    const discovered = Boolean(request.body.modelDiscoveryToken) && await consumeProviderModelDiscovery(
+      provider.id,
+      request.body.modelDiscoveryToken!,
+      requestedModel,
+      enteredKey,
+    )
+    if (!discovered) {
+      throw Object.assign(new Error('Refresh the official model list and choose a model again'), {
+        statusCode: 409,
+        code: 'MODEL_NOT_DISCOVERED',
+      })
+    }
+  }
   const submittedProfiles = parseModelProfiles(request.body.modelProfiles)
   provider.modelProfiles = { ...(provider.modelProfiles || {}), ...(submittedProfiles || {}) }
   if (previousModel && !provider.modelProfiles[previousModel]) {
@@ -192,14 +211,7 @@ app.put<{ Params: { id: string }; Body: { apiKey?: string; model?: string; enabl
       maxOutputTokens: provider.maxOutputTokens,
     }
   }
-  if (typeof request.body.model === 'string') {
-    const model = request.body.model.trim()
-    if (!model || model.length > 200 || ['__proto__', 'prototype', 'constructor'].includes(model)) {
-      throw Object.assign(new Error('Choose a valid model before saving'), { statusCode: 400 })
-    }
-    provider.model = model
-  }
-  if (!provider.model) throw Object.assign(new Error('Choose a model before saving'), { statusCode: 400 })
+  provider.model = requestedModel
   const selectedProfile = provider.modelProfiles[provider.model]
   if (provider.model !== previousModel && selectedProfile) {
     provider.contextWindowTokens = selectedProfile.contextWindowTokens
@@ -213,7 +225,6 @@ app.put<{ Params: { id: string }; Body: { apiKey?: string; model?: string; enabl
   }
   if (typeof request.body.enabled === 'boolean') provider.enabled = request.body.enabled
   else provider.enabled = true
-  const enteredKey = typeof request.body.apiKey === 'string' ? request.body.apiKey.trim() : ''
   // An empty field means "keep the saved key". Key removal is deliberately
   // restricted to DELETE /api/providers/:id/secret.
   if (enteredKey && provider.apiKeySecret) await setSecret(provider.apiKeySecret, enteredKey)
