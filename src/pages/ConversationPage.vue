@@ -79,20 +79,35 @@ async function send() {
   sending.value = true
   error.value = ''
   const optimisticTurn = beginOptimisticTurn(conversation.value.messages, text, clientMessageId)
-  await scrollEnd()
+  await scrollEnd().catch(() => undefined)
+  let result: { userMessage: Message; assistantMessage: Message; status: 'active' }
   try {
-    const result = await api.post<{ userMessage: Message; assistantMessage: Message; status: 'active' }>(`/conversations/${route.params.id}/messages`, { content: text, clientMessageId })
-    sessionStorage.removeItem(draftKey.value)
-    sessionStorage.removeItem(messageIdKey.value)
-    completeOptimisticTurn(conversation.value.messages, { localId: optimisticTurn.localId, clientMessageId }, result.userMessage, result.assistantMessage)
-    conversation.value.status = 'active'
-    await scrollEnd()
+    result = await api.post<{ userMessage: Message; assistantMessage: Message; status: 'active' }>(`/conversations/${route.params.id}/messages`, { content: text, clientMessageId })
   } catch (value: unknown) {
     input.value = text
     failOptimisticTurn(optimisticTurn.message)
     if (needsModelConfiguration(value)) await guideToModelSettings(router, route.fullPath)
     else error.value = turnErrorMessage(value)
-  } finally { sending.value = false }
+    sending.value = false
+    return
+  }
+
+  // The server has accepted the turn. From this point on, never restore the
+  // submitted text as a draft even if a local rendering step fails.
+  sessionStorage.removeItem(draftKey.value)
+  sessionStorage.removeItem(messageIdKey.value)
+  input.value = ''
+  try {
+    completeOptimisticTurn(conversation.value.messages, { localId: optimisticTurn.localId, clientMessageId }, result.userMessage, result.assistantMessage)
+    conversation.value.status = 'active'
+    await scrollEnd()
+  } catch {
+    // Recover the visible conversation from the committed server state without
+    // turning an already-sent message back into editable input.
+    await load().catch(() => undefined)
+  } finally {
+    sending.value = false
+  }
 }
 
 function openLookup(term: string, sentence: string) { lookup.value = { open: true, term, sentence } }

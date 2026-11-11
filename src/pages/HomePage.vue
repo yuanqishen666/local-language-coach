@@ -7,13 +7,7 @@ import { useAppStore } from '../stores/app'
 import AppIcon from '../components/AppIcon.vue'
 import { guideToModelSettings, needsModelConfiguration } from '../model-access'
 import { displayTargetLanguage } from '../../shared/locales'
-
-interface ConversationListItem {
-  id: string
-  title: string
-  status: 'active' | 'archived'
-  updatedAt: string
-}
+import { conversationDisplayTitle, type ConversationListItem } from '../conversation-list'
 
 const store = useAppStore()
 const router = useRouter()
@@ -44,6 +38,9 @@ async function startConversation() {
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(String(locale.value), { dateStyle: 'medium' }).format(new Date(value))
+}
+function displayTitle(item: ConversationListItem) {
+  return conversationDisplayTitle(item, t('home.openTitle'))
 }
 </script>
 
@@ -81,7 +78,7 @@ function formatDate(value: string) {
       <div v-if="history.length" class="recent-list">
         <RouterLink v-for="item in history.slice(0, 4)" :key="item.id" :to="`/conversation/${item.id}`">
           <span class="status-pin" :class="item.status"></span>
-          <div><b>{{ item.title }}</b><small>{{ formatDate(item.updatedAt) }}</small></div>
+          <div><b>{{ displayTitle(item) }}</b><small>{{ item.kind === 'direct' ? t('history.direct') : t('history.scene') }} · {{ formatDate(item.updatedAt) }}</small></div>
           <em>{{ item.status === 'archived' ? t('history.archived') : t('history.continue') }}</em>
           <AppIcon name="arrow" :size="16" />
         </RouterLink>
@@ -92,7 +89,7 @@ function formatDate(value: string) {
 </template>
 
 <style scoped>
-.home{max-width:1140px}.hero{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:30px}.hero h1{max-width:760px}.level-stamp{width:72px;height:72px;border-radius:50%;border:1px solid var(--green);display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--green);font-weight:800;font-size:19px;flex:0 0 auto}.level-stamp small{font-size:11px;letter-spacing:.12em;margin-top:2px}.start-grid{display:grid;grid-template-columns:1.25fr .75fr;gap:18px}.start-card{width:100%;min-height:318px;border:1px solid var(--line);border-radius:20px;padding:26px;text-align:left;color:var(--ink);position:relative;display:flex;flex-direction:column;align-items:flex-start;overflow:hidden;transition:.2s;background:var(--paper)}.start-card:hover{transform:translateY(-3px);box-shadow:var(--shadow)}.start-card.direct{background:var(--green);border-color:var(--green);color:white}.start-card.direct:after{content:'聊';position:absolute;right:-22px;bottom:-102px;font-size:250px;font-weight:800;color:rgba(255,255,255,.035);pointer-events:none}.mode-icon{width:52px;height:52px;border-radius:14px;display:grid;place-items:center;background:#e5ebe5;color:var(--green);margin-bottom:42px}.direct .mode-icon{background:rgba(255,255,255,.12);color:white}.direct .badge{background:var(--lime);margin-bottom:7px}.start-card h2{font-size:25px;margin:9px 0}.start-card p{font-size:13px;line-height:1.75;opacity:.72;margin:0;max-width:560px}.start-card strong{width:100%;margin-top:auto;padding-top:26px;font-size:12px;display:flex;align-items:center;justify-content:space-between}.start-error{margin:12px 0 0;padding:11px 13px;border-radius:10px;background:#f7e9e6;color:var(--red);font-size:11px}.recent{margin-top:46px}.section-title{display:flex;align-items:end;justify-content:space-between;margin-bottom:16px}.section-title a{font-size:11px;color:var(--green);font-weight:700}.recent-list{border-top:1px solid var(--line)}.recent-list>a{min-height:73px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:9px 1fr auto 18px;align-items:center;gap:14px;padding:10px 7px;transition:.15s}.recent-list>a:hover{background:rgba(255,255,255,.42);padding-left:12px}.status-pin{width:7px;height:7px;background:var(--green-2);border-radius:50%}.status-pin.archived{background:#a6aaa2}.recent-list b,.recent-list small{display:block}.recent-list b{font-size:13px}.recent-list small{font-size:11px;color:var(--muted);margin-top:4px}.recent-list em{font-style:normal;font-size:11px;color:var(--muted)}
+.home{max-width:1140px}.hero{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:30px}.hero h1{max-width:760px}.level-stamp{width:72px;height:72px;border-radius:50%;border:1px solid var(--green);display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--green);font-weight:800;font-size:19px;flex:0 0 auto}.level-stamp small{font-size:11px;letter-spacing:.12em;margin-top:2px}.start-grid{display:grid;grid-template-columns:1.25fr .75fr;gap:18px}.start-card{width:100%;min-height:318px;border:1px solid var(--line);border-radius:20px;padding:26px;text-align:left;color:var(--ink);position:relative;display:flex;flex-direction:column;align-items:flex-start;overflow:hidden;transition:.2s;background:var(--paper)}.start-card:hover{transform:translateY(-3px);box-shadow:var(--shadow)}.start-card.direct{background:var(--green);border-color:var(--green);color:white}.start-card.direct:after{content:'聊';position:absolute;right:-22px;bottom:-102px;font-size:250px;font-weight:800;color:rgba(255,255,255,.035);pointer-events:none}.mode-icon{width:52px;height:52px;border-radius:14px;display:grid;place-items:center;background:#e5ebe5;color:var(--green);margin-bottom:42px}.direct .mode-icon{background:rgba(255,255,255,.12);color:white}.direct .badge{background:var(--lime);margin-bottom:7px}.start-card h2{font-size:25px;margin:9px 0}.start-card p{font-size:13px;line-height:1.75;opacity:.72;margin:0;max-width:560px}.start-card strong{width:100%;margin-top:auto;padding-top:26px;font-size:12px;display:flex;align-items:center;justify-content:space-between}.start-error{margin:12px 0 0;padding:11px 13px;border-radius:10px;background:#f7e9e6;color:var(--red);font-size:11px}.recent{margin-top:46px}.section-title{display:flex;align-items:end;justify-content:space-between;margin-bottom:16px}.section-title a{font-size:11px;color:var(--green);font-weight:700}.recent-list{border-top:1px solid var(--line)}.recent-list>a{min-height:73px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:9px minmax(0,1fr) auto 18px;align-items:center;gap:14px;padding:10px 7px;transition:.15s}.recent-list>a:hover{background:rgba(255,255,255,.42);padding-left:12px}.recent-list>a>div{min-width:0}.status-pin{width:7px;height:7px;background:var(--green-2);border-radius:50%}.status-pin.archived{background:#a6aaa2}.recent-list b,.recent-list small{display:block}.recent-list b{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.recent-list small{font-size:11px;color:var(--muted);margin-top:4px}.recent-list em{font-style:normal;font-size:11px;color:var(--muted)}
 .start-card strong{font-size:13px}.start-error{font-size:11px}.section-title a{font-size:12px}.recent-list small{font-size:11px}.recent-list em{font-size:11px}
 @media(max-width:760px){.start-grid{display:block}.start-card{min-height:276px;margin-bottom:13px}.mode-icon{margin-bottom:28px}.level-stamp{display:none}.hero{display:block}.recent-list>a{grid-template-columns:8px 1fr 15px}.recent-list em{display:none}}
 </style>

@@ -9,11 +9,11 @@ const configPath = path.join(root, 'config.json')
 const secretsPath = path.join(root, 'secrets.json')
 
 const providerDefaults: ProviderConfig[] = [
-  { id: 'openai', name: 'OpenAI', kind: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-6-astra', apiKeySecret: 'providers.openai.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200 },
-  { id: 'anthropic', name: 'Anthropic', kind: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-5-5', apiKeySecret: 'providers.anthropic.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200 },
-  { id: 'gemini', name: 'Google Gemini', kind: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-3.8-flash', apiKeySecret: 'providers.gemini.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200 },
-  { id: 'deepseek', name: 'DeepSeek', kind: 'deepseek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', apiKeySecret: 'providers.deepseek.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200 },
-  { id: 'kimi', name: 'Moonshot / Kimi', kind: 'kimi', baseUrl: 'https://api.moonshot.ai/v1', model: 'kimi-k3.1-pro', apiKeySecret: 'providers.kimi.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200 },
+  { id: 'openai', name: 'OpenAI', kind: 'openai', baseUrl: 'https://api.openai.com/v1', model: '', apiKeySecret: 'providers.openai.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200, modelProfiles: {} },
+  { id: 'anthropic', name: 'Anthropic', kind: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: '', apiKeySecret: 'providers.anthropic.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200, modelProfiles: {} },
+  { id: 'gemini', name: 'Google Gemini', kind: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', model: '', apiKeySecret: 'providers.gemini.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200, modelProfiles: {} },
+  { id: 'deepseek', name: 'DeepSeek', kind: 'deepseek', baseUrl: 'https://api.deepseek.com', model: '', apiKeySecret: 'providers.deepseek.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200, modelProfiles: {} },
+  { id: 'kimi', name: 'Moonshot / Kimi', kind: 'kimi', baseUrl: 'https://api.moonshot.ai/v1', model: '', apiKeySecret: 'providers.kimi.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200, modelProfiles: {} },
 ]
 
 export const defaultConfig: AppConfig = {
@@ -56,9 +56,20 @@ export function validateConfig(input: AppConfig): AppConfig {
     if (provider.name !== expected.name || provider.kind !== expected.kind || provider.baseUrl !== expected.baseUrl || provider.apiKeySecret !== expected.apiKeySecret) {
       throw new Error(`Provider identity is invalid: ${expected.id}`)
     }
-    if (typeof provider.model !== 'string' || !provider.model.trim() || typeof provider.enabled !== 'boolean') throw new Error(`Provider settings are incomplete: ${expected.id}`)
+    if (typeof provider.model !== 'string' || typeof provider.enabled !== 'boolean') throw new Error(`Provider settings are incomplete: ${expected.id}`)
+    if (provider.model.length > 200 || ['__proto__', 'prototype', 'constructor'].includes(provider.model.trim()) ||
+      ((provider.enabled || provider.capability) && !provider.model.trim())) throw new Error(`Provider model is invalid: ${expected.id}`)
     if (!Number.isInteger(provider.contextWindowTokens) || provider.contextWindowTokens < 4_096) throw new Error(`Context window is invalid: ${expected.id}`)
     if (!Number.isInteger(provider.maxOutputTokens) || provider.maxOutputTokens < 256) throw new Error(`Output limit is invalid: ${expected.id}`)
+    if (provider.modelProfiles !== undefined) {
+      const profiles = record(provider.modelProfiles)
+      for (const [model, profileValue] of Object.entries(profiles)) {
+        const profile = record(profileValue)
+        if (!model.trim() || model.length > 200 || ['__proto__', 'prototype', 'constructor'].includes(model)) throw new Error(`Saved model name is invalid: ${expected.id}`)
+        if (!Number.isInteger(profile.contextWindowTokens) || profile.contextWindowTokens < 4_096) throw new Error(`Saved model context window is invalid: ${expected.id}`)
+        if (!Number.isInteger(profile.maxOutputTokens) || profile.maxOutputTokens < 256) throw new Error(`Saved model output limit is invalid: ${expected.id}`)
+      }
+    }
     if (provider.capability) {
       const capability = provider.capability
       if (capability.conversationReady !== true || capability.lookupReady !== true || capability.contractVersion !== 6 ||

@@ -1,5 +1,10 @@
 import type { UiLocale } from '../shared/locales'
 
+export interface ProviderModelProfile {
+  contextWindowTokens: number
+  maxOutputTokens: number
+}
+
 export interface Provider {
   id: string
   name: string
@@ -11,6 +16,7 @@ export interface Provider {
   capabilityReady?: boolean
   contextWindowTokens: number
   maxOutputTokens: number
+  modelProfiles?: Record<string, ProviderModelProfile>
   capability?: {
     outputMode: 'json_schema' | 'json_object' | 'prompt_json'
     baseUrl: string

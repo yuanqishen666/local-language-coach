@@ -13,7 +13,7 @@ import { lookupCacheKey } from './utils/ai-cache-key.js'
 import { translationCacheKey } from './utils/translation-cache.js'
 import { coachTurn, lookupTerm, suggestSetups, summarizeEpisode, translateMessage } from './ai/engine.js'
 import { assertModelConfigured, consumeProviderCertification, listProviderModels, STRUCTURED_CONTRACT_VERSION, testProvider } from './ai/provider.js'
-import type { AppConfig, ConversationEpisode, ConversationSetup, ProviderCapability } from './types.js'
+import type { AppConfig, ConversationEpisode, ConversationSetup, ProviderCapability, ProviderModelProfile } from './types.js'
 import type { ProviderTestOverrides } from './ai/provider.js'
 import { emptyConversationState, extractiveEpisodeFallback, mergeConversationState, normalizeConversationSetup, normalizeConversationState, type StoredConversationMessage } from './ai/context.js'
 import { supportsProviderLookup } from './lookup/provider-tools.js'
@@ -153,14 +153,64 @@ app.post('/api/settings/reset', async () => {
   return { ok: true, config: next }
 })
 
-app.put<{ Params: { id: string }; Body: { apiKey?: string; model?: string; enabled?: boolean; contextWindowTokens?: number; maxOutputTokens?: number; capability?: ProviderCapability; certificationToken?: string } }>('/api/providers/:id', async (request) => {
+function parseModelProfiles(value: unknown) {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw Object.assign(new Error('Model profiles must be an object'), { statusCode: 400 })
+  }
+  const entries = Object.entries(value)
+  if (entries.length > 500) throw Object.assign(new Error('Too many model profiles'), { statusCode: 400 })
+  const profiles: Record<string, ProviderModelProfile> = Object.create(null)
+  for (const [rawModel, rawProfile] of entries) {
+    const model = rawModel.trim()
+    if (!model || model.length > 200 || ['__proto__', 'prototype', 'constructor'].includes(model) ||
+      !rawProfile || typeof rawProfile !== 'object' || Array.isArray(rawProfile)) {
+      throw Object.assign(new Error('A model profile is invalid'), { statusCode: 400 })
+    }
+    const profile = rawProfile as Record<string, unknown>
+    const contextWindowTokens = Number(profile.contextWindowTokens)
+    const maxOutputTokens = Number(profile.maxOutputTokens)
+    if (!Number.isInteger(contextWindowTokens) || contextWindowTokens < 4_096 ||
+      !Number.isInteger(maxOutputTokens) || maxOutputTokens < 256) {
+      throw Object.assign(new Error('A model profile budget is invalid'), { statusCode: 400 })
+    }
+    profiles[model] = { contextWindowTokens, maxOutputTokens }
+  }
+  return profiles
+}
+
+app.put<{ Params: { id: string }; Body: { apiKey?: string; model?: string; enabled?: boolean; contextWindowTokens?: number; maxOutputTokens?: number; modelProfiles?: Record<string, ProviderModelProfile>; capability?: ProviderCapability; certificationToken?: string } }>('/api/providers/:id', async (request) => {
   const current = await getConfig()
   const provider = current.providers.find((item) => item.id === request.params.id)
   if (!provider) throw Object.assign(new Error('Provider not found'), { statusCode: 404 })
   const previousModel = provider.model
-  if (typeof request.body.model === 'string') provider.model = request.body.model.trim()
+  const submittedProfiles = parseModelProfiles(request.body.modelProfiles)
+  provider.modelProfiles = { ...(provider.modelProfiles || {}), ...(submittedProfiles || {}) }
+  if (previousModel && !provider.modelProfiles[previousModel]) {
+    provider.modelProfiles[previousModel] = {
+      contextWindowTokens: provider.contextWindowTokens,
+      maxOutputTokens: provider.maxOutputTokens,
+    }
+  }
+  if (typeof request.body.model === 'string') {
+    const model = request.body.model.trim()
+    if (!model || model.length > 200 || ['__proto__', 'prototype', 'constructor'].includes(model)) {
+      throw Object.assign(new Error('Choose a valid model before saving'), { statusCode: 400 })
+    }
+    provider.model = model
+  }
+  if (!provider.model) throw Object.assign(new Error('Choose a model before saving'), { statusCode: 400 })
+  const selectedProfile = provider.modelProfiles[provider.model]
+  if (provider.model !== previousModel && selectedProfile) {
+    provider.contextWindowTokens = selectedProfile.contextWindowTokens
+    provider.maxOutputTokens = selectedProfile.maxOutputTokens
+  }
   if (Number.isFinite(request.body.contextWindowTokens) && request.body.contextWindowTokens! >= 4_096) provider.contextWindowTokens = Math.round(request.body.contextWindowTokens!)
   if (Number.isFinite(request.body.maxOutputTokens) && request.body.maxOutputTokens! >= 256) provider.maxOutputTokens = Math.round(request.body.maxOutputTokens!)
+  provider.modelProfiles[provider.model] = {
+    contextWindowTokens: provider.contextWindowTokens,
+    maxOutputTokens: provider.maxOutputTokens,
+  }
   if (typeof request.body.enabled === 'boolean') provider.enabled = request.body.enabled
   else provider.enabled = true
   const enteredKey = typeof request.body.apiKey === 'string' ? request.body.apiKey.trim() : ''
@@ -261,7 +311,18 @@ async function compactOlderMessages(conversationId: string, messages: StoredConv
   return { state: nextState, episodes: readEpisodes(conversationId) }
 }
 
-app.get('/api/conversations', async () => rows('SELECT id, mode, title, status, created_at AS createdAt, updated_at AS updatedAt FROM conversations ORDER BY updated_at DESC'))
+app.get('/api/conversations', async () => rows(`SELECT c.id, c.mode, c.title, c.status,
+  CASE WHEN c.setup_json IS NULL OR TRIM(c.setup_json) = '' THEN 'direct' ELSE 'scene' END AS kind,
+  COALESCE((
+    SELECT SUBSTR(m.content, 1, 240)
+    FROM messages m
+    WHERE m.conversation_id = c.id AND m.role = 'user'
+    ORDER BY m.created_at, m.rowid
+    LIMIT 1
+  ), '') AS firstMessage,
+  c.created_at AS createdAt, c.updated_at AS updatedAt
+  FROM conversations c
+  ORDER BY c.updated_at DESC`))
 
 app.post<{ Body: { title?: string; setup?: ConversationSetup | null } }>('/api/conversations', async (request) => {
   await assertModelConfigured()

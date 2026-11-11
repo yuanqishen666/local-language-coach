@@ -14,6 +14,11 @@ export interface ProviderCapability {
   testedAt: string
 }
 
+export interface ProviderModelProfile {
+  contextWindowTokens: number
+  maxOutputTokens: number
+}
+
 export interface ProviderConfig {
   id: string
   name: string
@@ -26,6 +31,8 @@ export interface ProviderConfig {
   contextWindowTokens: number
   /** Output reservation for one conversational turn. */
   maxOutputTokens: number
+  /** Per-model budgets retained when the user switches models. */
+  modelProfiles?: Record<string, ProviderModelProfile>
   capability?: ProviderCapability
 }
 

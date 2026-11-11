@@ -15,12 +15,16 @@ export function learningPreferencesKey(value: LearningPreferences) {
 
 /** Only user-editable provider fields participate in dirty-state checks. */
 export function providerConfigurationKey(
-  provider: Pick<Provider, 'model' | 'contextWindowTokens' | 'maxOutputTokens'>,
+  provider: Pick<Provider, 'model' | 'contextWindowTokens' | 'maxOutputTokens' | 'modelProfiles'>,
 ) {
+  const profiles = Object.entries(provider.modelProfiles || {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([model, profile]) => [model, profile.contextWindowTokens, profile.maxOutputTokens])
   return JSON.stringify([
     provider.model.trim(),
     provider.contextWindowTokens,
     provider.maxOutputTokens,
+    profiles,
   ])
 }
 

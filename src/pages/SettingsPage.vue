@@ -7,6 +7,7 @@ import { useAppStore } from "../stores/app";
 import AppIcon from "../components/AppIcon.vue";
 import { displayTargetLanguage, LOCALE_META, TARGET_LANGUAGES, UI_LOCALES } from "../../shared/locales";
 import { learningPreferencesKey, providerConfigurationKey } from "../form-state";
+import { rememberProviderModelProfile, switchProviderModel } from "../model-profiles";
 import type { Provider, Settings } from "../types";
 type RemoteStatus = {
   active: boolean;
@@ -47,6 +48,8 @@ const verified = ref<Record<string, string>>({});
 const testedCapability = ref<Record<string, ProviderCapability>>({});
 const certificationTokens = ref<Record<string, string>>({});
 const availableModels = ref<Record<string, string[]>>({});
+const manualModels = ref<Record<string, boolean>>({});
+const modelBeforeEdit = ref<Record<string, string>>({});
 const keys = ref<Record<string, string>>({});
 const providerDrafts = ref<Provider[]>([]);
 const providerBaselines = ref<Record<string, string>>({});
@@ -82,6 +85,17 @@ const languages = TARGET_LANGUAGES;
 function cloneValue<T>(value: T): T {
   return structuredClone(toRaw(value));
 }
+function prepareProviderDraft(provider: Provider) {
+  const draft = cloneValue(provider);
+  draft.modelProfiles = { ...(draft.modelProfiles || {}) };
+  if (draft.model.trim() && !draft.modelProfiles[draft.model.trim()]) {
+    draft.modelProfiles[draft.model.trim()] = {
+      contextWindowTokens: draft.contextWindowTokens,
+      maxOutputTokens: draft.maxOutputTokens,
+    };
+  }
+  return draft;
+}
 function syncLanguageDraft() {
   if (!store.settings) return;
   Object.assign(languageDraft.ui, store.settings.ui);
@@ -92,21 +106,19 @@ function syncProviderDraft(id: string) {
   const fresh = store.settings?.providers.find((item) => item.id === id);
   if (!fresh) return;
   const index = providerDrafts.value.findIndex((item) => item.id === id);
-  const draft = cloneValue(fresh);
+  const draft = prepareProviderDraft(fresh);
   if (index === -1) providerDrafts.value.push(draft);
   else providerDrafts.value[index] = draft;
-  providerBaselines.value[id] = providerConfigurationKey(fresh);
+  providerBaselines.value[id] = providerConfigurationKey(draft);
 }
 function initializeDrafts() {
   if (!store.settings) return;
   syncLanguageDraft();
   defaultProvider.value = store.settings.llm.defaultProvider;
   webLookupEnabled.value = store.settings.webLookup.enabled;
-  providerDrafts.value = store.settings.providers.map((provider) =>
-    cloneValue(provider),
-  );
+  providerDrafts.value = store.settings.providers.map(prepareProviderDraft);
   providerBaselines.value = Object.fromEntries(
-    store.settings.providers.map((provider) => [
+    providerDrafts.value.map((provider) => [
       provider.id,
       providerConfigurationKey(provider),
     ]),
@@ -159,9 +171,38 @@ function providerSignature(provider: any) {
 function providerOverrides(provider: any) {
   const key = keys.value[provider.id]?.trim();
   return {
-    model: provider.model,
+    model: provider.model.trim(),
     ...(key ? { apiKey: key } : {}),
   };
+}
+function rememberModelProfile(provider: Provider, model = provider.model) {
+  rememberProviderModelProfile(provider, model);
+}
+function activateModel(provider: Provider, rawModel: string, previousModel = provider.model) {
+  switchProviderModel(provider, rawModel, previousModel);
+  invalidateProvider(provider.id);
+}
+function beginManualModelEdit(provider: Provider) {
+  modelBeforeEdit.value[provider.id] = provider.model;
+  rememberModelProfile(provider);
+}
+function finishManualModelEdit(provider: Provider) {
+  const previousModel = modelBeforeEdit.value[provider.id] ?? provider.model;
+  const nextModel = provider.model;
+  delete modelBeforeEdit.value[provider.id];
+  activateModel(provider, nextModel, previousModel);
+}
+function updateActiveModelProfile(provider: Provider) {
+  rememberModelProfile(provider);
+  invalidateProvider(provider.id);
+}
+function hasModelList(provider: Provider) {
+  return Boolean(availableModels.value[provider.id]?.length);
+}
+function modelChoices(provider: Provider) {
+  const current = provider.model.trim();
+  const models = availableModels.value[provider.id] || [];
+  return current && !models.includes(current) ? [current, ...models] : models;
 }
 function invalidateProvider(id: string) {
   delete verified.value[id];
@@ -262,6 +303,7 @@ async function saveProvider(provider: any) {
     return;
   savingProvider.value = provider.id;
   try {
+    rememberModelProfile(provider);
     if (
       !savedCapabilityMatches(provider) &&
       verified.value[provider.id] !== providerSignature(provider) &&
@@ -273,6 +315,7 @@ async function saveProvider(provider: any) {
       enabled: true,
       contextWindowTokens: provider.contextWindowTokens,
       maxOutputTokens: provider.maxOutputTokens,
+      modelProfiles: provider.modelProfiles,
       capability: testedCapability.value[provider.id] || provider.capability,
       certificationToken: certificationTokens.value[provider.id],
     });
@@ -315,6 +358,7 @@ async function loadModels(provider: any) {
       providerOverrides(provider),
     );
     availableModels.value[provider.id] = data.models;
+    if (data.models.length) manualModels.value[provider.id] = false;
     result.value[provider.id] = data.models.length
       ? "✓ " + t("settings.modelsFound", { count: data.models.length })
       : "× " + t("settings.noModels");
@@ -469,7 +513,7 @@ onMounted(loadRemote);
                   :key="p.id"
                   :value="p.id"
                 >
-                  {{ providerName(p) }}
+                  {{ providerName(p) }} · {{ p.model }}
                 </option>
                 <option v-if="!selectableProviders.length" disabled value="">
                   {{ t('settings.noQualifiedModels') }}
@@ -505,23 +549,41 @@ onMounted(loadRemote);
               >
             </header>
             <div class="provider-fields">
-              <div class="field">
-                <label>{{ t('settings.modelName') }}</label
-                ><input
-                  v-model="provider.model"
-                  :list="
-                    availableModels[provider.id]?.length
-                      ? `models-${provider.id}`
-                      : undefined
-                  "
-                  @input="invalidateProvider(provider.id)"
-                /><datalist :id="`models-${provider.id}`">
+              <div class="field model-field">
+                <div class="field-label-row">
+                  <label :for="`model-${provider.id}`">{{ t('settings.modelName') }}</label>
+                  <button
+                    v-if="hasModelList(provider)"
+                    type="button"
+                    class="text-action"
+                    @click="manualModels[provider.id] = !manualModels[provider.id]"
+                  >
+                    {{ manualModels[provider.id] ? t('settings.chooseFromModels') : t('settings.enterModelManually') }}
+                  </button>
+                </div>
+                <select
+                  v-if="hasModelList(provider) && !manualModels[provider.id]"
+                  :id="`model-${provider.id}`"
+                  :value="provider.model"
+                  @change="activateModel(provider, ($event.target as HTMLSelectElement).value)"
+                >
+                  <option disabled value="">{{ t('settings.chooseModel') }}</option>
                   <option
-                    v-for="model in availableModels[provider.id]"
+                    v-for="model in modelChoices(provider)"
                     :key="model"
                     :value="model"
-                  />
-                </datalist>
+                  >{{ model }}</option>
+                </select>
+                <input
+                  v-else
+                  :id="`model-${provider.id}`"
+                  v-model="provider.model"
+                  :placeholder="t('settings.modelNamePlaceholder')"
+                  @focus="beginManualModelEdit(provider)"
+                  @input="invalidateProvider(provider.id)"
+                  @change="finishManualModelEdit(provider)"
+                />
+                <small>{{ hasModelList(provider) ? t('settings.modelListHelp', { count: availableModels[provider.id].length }) : t('settings.modelDiscoveryHelp') }}</small>
               </div>
               <div v-if="provider.apiKeySecret" class="field api-key">
                 <label>{{ t('settings.apiKey') }}</label
@@ -539,12 +601,12 @@ onMounted(loadRemote);
               </div>
               <div class="field budget-field">
                 <label>{{ t('settings.contextBudget') }}</label>
-                <input v-model.number="provider.contextWindowTokens" type="number" min="4096" step="1024" @input="invalidateProvider(provider.id)" />
+                <input v-model.number="provider.contextWindowTokens" type="number" min="4096" step="1024" @input="updateActiveModelProfile(provider)" />
                 <small>{{ t('settings.contextBudgetHelp') }}</small>
               </div>
               <div class="field budget-field">
                 <label>{{ t('settings.outputBudget') }}</label>
-                <input v-model.number="provider.maxOutputTokens" type="number" min="256" step="128" @input="invalidateProvider(provider.id)" />
+                <input v-model.number="provider.maxOutputTokens" type="number" min="256" step="128" @input="updateActiveModelProfile(provider)" />
                 <small>{{ t('settings.outputBudgetHelp') }}</small>
               </div>
             </div>
@@ -909,6 +971,27 @@ onMounted(loadRemote);
 }
 .provider-fields .api-key {
   grid-column: 1/-1;
+}
+.field-label-row {
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.text-action {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 680;
+}
+.text-action:hover {
+  text-decoration: underline;
+}
+.model-field small {
+  line-height: 1.5;
 }
 .web-settings > p {
   max-width: 720px;
