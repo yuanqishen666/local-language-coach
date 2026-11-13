@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../api'
@@ -15,8 +15,20 @@ const { t, locale } = useI18n()
 const history = ref<ConversationListItem[]>([])
 const creating = ref(false)
 const startError = ref('')
+const directTitleParts = computed(() => {
+  const title = t('home.openTitle')
+  return String(locale.value).startsWith('zh') ? [title.slice(0, 2), title.slice(2)] : [title]
+})
 
-onMounted(async () => { history.value = await api.get<ConversationListItem[]>('/conversations') })
+let loadVersion = 0
+async function loadHistory() {
+  const version = ++loadVersion
+  const requestedLocale = String(locale.value)
+  const loaded = await api.get<ConversationListItem[]>(`/conversations?interfaceLocale=${encodeURIComponent(requestedLocale)}`)
+  if (version === loadVersion && requestedLocale === String(locale.value)) history.value = loaded
+}
+onMounted(loadHistory)
+watch(locale, loadHistory)
 
 async function startConversation() {
   startError.value = ''
@@ -26,7 +38,7 @@ async function startConversation() {
   }
   creating.value = true
   try {
-    const data = await api.post<{ id: string }>('/conversations', { title: t('home.openTitle'), setup: null })
+    const data = await api.post<{ id: string }>('/conversations', { title: t('home.openTitle'), setup: null, interfaceLocale: String(locale.value) })
     await router.push(`/conversation/${data.id}`)
   } catch (error) {
     if (needsModelConfiguration(error)) await guideToModelSettings(router, '/')
@@ -40,56 +52,48 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat(String(locale.value), { dateStyle: 'medium' }).format(new Date(value))
 }
 function displayTitle(item: ConversationListItem) {
-  return conversationDisplayTitle(item, t('home.openTitle'))
+  return conversationDisplayTitle(item, t('home.openTitle'), t('history.scene'), String(locale.value))
 }
 </script>
 
 <template>
   <div class="page home">
-    <header class="hero">
-      <div>
-        <h1>{{ t('home.titleOpen') }}</h1>
-        <p class="subhead">{{ t('home.subtitleOpen', { language: displayTargetLanguage(store.settings?.learning.targetLanguageCode || 'en', locale) }) }}</p>
-      </div>
-      <span class="level-stamp">{{ store.settings?.learning.proficiency }}<small>{{ t('home.level') }}</small></span>
+    <header class="home-bar">
+      <b>{{ t('nav.home') }}</b>
+      <span>{{ displayTargetLanguage(store.settings?.learning.targetLanguageCode || 'en', locale) }} · {{ store.settings?.learning.proficiency }}</span>
     </header>
 
-    <section class="start-grid">
-      <button class="start-card direct" :disabled="creating" @click="startConversation">
-        <span class="mode-icon"><AppIcon name="spark" :size="28" /></span>
-        <h2>{{ t('home.openTitle') }}</h2>
-        <p>{{ t('home.openDescription') }}</p>
-        <strong>{{ creating ? t('home.starting') : t('home.openAction') }}<AppIcon name="arrow" /></strong>
+    <section class="start-stage">
+      <button class="direct-entry" :disabled="creating" @click="startConversation">
+        <h1><span v-for="part in directTitleParts" :key="part">{{ part }}</span></h1>
+        <span class="direct-action" :aria-label="creating ? t('home.starting') : t('home.openAction')"><AppIcon name="arrow" :size="24" /></span>
       </button>
-      <button class="start-card setting" @click="router.push('/start')">
-        <span class="mode-icon"><AppIcon name="compass" :size="28" /></span>
-        <h2>{{ t('home.settingTitle') }}</h2>
-        <p>{{ t('home.settingDescription') }}</p>
-        <strong>{{ t('home.settingAction') }}<AppIcon name="arrow" /></strong>
-      </button>
+
+      <div class="side-stage">
+        <button class="custom-entry" @click="router.push('/start')">
+          <span class="custom-collage" aria-hidden="true"><i class="portrait"><b></b></i><i class="texture"></i><i class="quote">“ ”</i></span>
+          <span class="custom-title"><h2>{{ t('home.settingTitle') }}</h2><AppIcon name="arrow" :size="24" /></span>
+          <span class="custom-fields"><i>{{ t('home.customPerson') }}</i><i>{{ t('home.customContext') }}</i><i>{{ t('home.customTopic') }}</i></span>
+        </button>
+
+        <section class="recent">
+          <div class="section-title"><h2>{{ t('home.recentOpen') }}</h2><RouterLink to="/history">{{ t('home.viewAll') }}</RouterLink></div>
+          <div v-if="history.length" class="recent-list">
+            <RouterLink v-for="item in history.slice(0, 2)" :key="item.id" :to="`/conversation/${item.id}`">
+              <div><b>{{ displayTitle(item) }}</b><small>{{ item.kind === 'direct' ? t('history.direct') : t('history.scene') }} · {{ formatDate(item.updatedAt) }}</small></div>
+              <AppIcon name="arrow" :size="16" />
+            </RouterLink>
+          </div>
+          <div v-else class="recent-empty">{{ t('home.emptyOpenTitle') }}</div>
+        </section>
+      </div>
     </section>
     <p v-if="startError" class="start-error" role="alert">{{ startError }}</p>
-
-    <section class="recent">
-      <div class="section-title">
-        <h2>{{ t('home.recentOpen') }}</h2>
-        <RouterLink to="/history">{{ t('home.viewAll') }} →</RouterLink>
-      </div>
-      <div v-if="history.length" class="recent-list">
-        <RouterLink v-for="item in history.slice(0, 4)" :key="item.id" :to="`/conversation/${item.id}`">
-          <span class="status-pin" :class="item.status"></span>
-          <div><b>{{ displayTitle(item) }}</b><small>{{ item.kind === 'direct' ? t('history.direct') : t('history.scene') }} · {{ formatDate(item.updatedAt) }}</small></div>
-          <em>{{ item.status === 'archived' ? t('history.archived') : t('history.continue') }}</em>
-          <AppIcon name="arrow" :size="16" />
-        </RouterLink>
-      </div>
-      <div v-else class="empty card"><strong>{{ t('home.emptyOpenTitle') }}</strong>{{ t('home.emptyOpenBody') }}</div>
-    </section>
   </div>
 </template>
 
 <style scoped>
-.home{max-width:1140px}.hero{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:30px}.hero h1{max-width:760px}.level-stamp{width:72px;height:72px;border-radius:50%;border:1px solid var(--green);display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--green);font-weight:800;font-size:19px;flex:0 0 auto}.level-stamp small{font-size:11px;letter-spacing:.12em;margin-top:2px}.start-grid{display:grid;grid-template-columns:1.25fr .75fr;gap:18px}.start-card{width:100%;min-height:318px;border:1px solid var(--line);border-radius:20px;padding:26px;text-align:left;color:var(--ink);position:relative;display:flex;flex-direction:column;align-items:flex-start;overflow:hidden;transition:.2s;background:var(--paper)}.start-card:hover{transform:translateY(-3px);box-shadow:var(--shadow)}.start-card.direct{background:var(--green);border-color:var(--green);color:white}.start-card.direct:after{content:'聊';position:absolute;right:-22px;bottom:-102px;font-size:250px;font-weight:800;color:rgba(255,255,255,.035);pointer-events:none}.mode-icon{width:52px;height:52px;border-radius:14px;display:grid;place-items:center;background:#e5ebe5;color:var(--green);margin-bottom:42px}.direct .mode-icon{background:rgba(255,255,255,.12);color:white}.direct .badge{background:var(--lime);margin-bottom:7px}.start-card h2{font-size:25px;margin:9px 0}.start-card p{font-size:13px;line-height:1.75;opacity:.72;margin:0;max-width:560px}.start-card strong{width:100%;margin-top:auto;padding-top:26px;font-size:12px;display:flex;align-items:center;justify-content:space-between}.start-error{margin:12px 0 0;padding:11px 13px;border-radius:10px;background:#f7e9e6;color:var(--red);font-size:11px}.recent{margin-top:46px}.section-title{display:flex;align-items:end;justify-content:space-between;margin-bottom:16px}.section-title a{font-size:11px;color:var(--green);font-weight:700}.recent-list{border-top:1px solid var(--line)}.recent-list>a{min-height:73px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:9px minmax(0,1fr) auto 18px;align-items:center;gap:14px;padding:10px 7px;transition:.15s}.recent-list>a:hover{background:rgba(255,255,255,.42);padding-left:12px}.recent-list>a>div{min-width:0}.status-pin{width:7px;height:7px;background:var(--green-2);border-radius:50%}.status-pin.archived{background:#a6aaa2}.recent-list b,.recent-list small{display:block}.recent-list b{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.recent-list small{font-size:11px;color:var(--muted);margin-top:4px}.recent-list em{font-style:normal;font-size:11px;color:var(--muted)}
-.start-card strong{font-size:13px}.start-error{font-size:11px}.section-title a{font-size:12px}.recent-list small{font-size:11px}.recent-list em{font-size:11px}
-@media(max-width:760px){.start-grid{display:block}.start-card{min-height:276px;margin-bottom:13px}.mode-icon{margin-bottom:28px}.level-stamp{display:none}.hero{display:block}.recent-list>a{grid-template-columns:8px 1fr 15px}.recent-list em{display:none}}
+.home{max-width:none;padding:26px 30px 46px}.home-bar{height:40px;margin-bottom:19px;display:flex;align-items:center;justify-content:space-between}.home-bar b{font-size:13px}.home-bar span{color:var(--muted);font-size:11px}.start-stage{min-height:594px;display:grid;grid-template-columns:minmax(510px,1.52fr) minmax(310px,.78fr);gap:12px}.direct-entry{position:relative;min-height:594px;padding:42px;display:flex;flex-direction:column;overflow:hidden;border:0;border-radius:28px 10px 28px 28px;background:linear-gradient(145deg,#3d65e8 0%,var(--blue) 52%,#203fa9 100%);color:white;text-align:left;isolation:isolate;box-shadow:0 20px 52px rgba(32,57,155,.16);transition:transform .24s var(--ease)}.direct-entry:before{content:'';position:absolute;width:390px;height:390px;right:-155px;top:-112px;border:1px solid rgba(255,255,255,.16);border-radius:50%;box-shadow:0 0 0 52px rgba(255,255,255,.03),0 0 0 106px rgba(255,255,255,.025);z-index:-1}.direct-entry:after{content:'';position:absolute;left:-8%;right:-8%;bottom:122px;height:1px;background:rgba(255,255,255,.14);transform:rotate(-4deg);z-index:-1}.direct-entry:hover{transform:translateY(-3px)}.direct-entry:disabled{opacity:.72}.direct-entry h1{margin:auto 0;font-family:'Songti SC',STSong,serif;font-size:clamp(68px,6.6vw,104px);font-weight:520;line-height:.94;letter-spacing:-.07em}.direct-entry h1 span{display:block}.direct-entry h1 span+span{margin-left:.56em}.direct-action{position:absolute;right:42px;bottom:34px;width:54px;height:54px;display:grid;place-items:center;border-radius:50%;background:var(--paper);color:var(--blue);transition:transform .2s var(--ease),background .18s}.direct-entry:hover .direct-action{transform:translate(3px,-3px) rotate(-4deg);background:#f7d276}.side-stage{min-width:0;display:grid;grid-template-rows:minmax(355px,1fr) 224px;gap:12px}.custom-entry{position:relative;min-height:355px;padding:26px 28px;overflow:hidden;border:0;border-radius:10px 28px 28px 10px;background:var(--cream);text-align:left;transition:transform .24s var(--ease),box-shadow .24s}.custom-entry:hover{transform:translateY(-3px);box-shadow:0 18px 40px rgba(87,64,36,.12)}.custom-collage{position:absolute;inset:0;overflow:hidden}.portrait{position:absolute;left:28px;top:26px;width:118px;height:148px;overflow:hidden;background:var(--peach);transform:rotate(-4deg);box-shadow:0 16px 30px rgba(74,52,31,.12)}.portrait:before{content:'';position:absolute;width:48px;height:48px;left:35px;top:24px;border-radius:50%;background:var(--ink)}.portrait b{position:absolute;width:86px;height:64px;left:16px;bottom:-4px;border-radius:50% 50% 0 0;background:var(--ink)}.texture{position:absolute;width:55%;height:48%;right:-8%;top:-8%;border-radius:0 0 0 65%;background:repeating-linear-gradient(0deg,transparent 0 5px,rgba(28,46,38,.08) 5px 6px),repeating-linear-gradient(90deg,transparent 0 5px,rgba(28,46,38,.06) 5px 6px),var(--sage);transform:rotate(5deg)}.quote{position:absolute;right:34px;top:105px;width:92px;height:92px;display:grid;place-items:center;border-radius:50%;background:var(--blue);color:white;font:40px/1 Georgia,serif}.custom-title{position:absolute;left:28px;right:25px;bottom:64px;display:flex;align-items:end;justify-content:space-between}.custom-title h2{font-family:'Songti SC',STSong,serif;font-size:clamp(28px,2.4vw,38px);font-weight:520;line-height:1.05;letter-spacing:-.05em}.custom-title svg{transition:transform .2s var(--ease)}.custom-entry:hover .custom-title svg{transform:translate(4px,-4px)}.custom-fields{position:absolute;left:28px;right:28px;bottom:24px;display:flex;gap:6px}.custom-fields i{padding:5px 8px;border-radius:999px;background:rgba(255,253,247,.64);font-size:10px;font-style:normal}.recent{padding:23px 25px;display:flex;flex-direction:column;border-radius:18px 18px 28px 18px;background:var(--paper)}.section-title{display:flex;align-items:center;justify-content:space-between}.section-title h2{font-size:14px}.section-title a{color:var(--muted);font-size:11px}.recent-list{margin-top:auto}.recent-list>a{min-height:61px;padding:10px 0 7px;display:grid;grid-template-columns:minmax(0,1fr) 18px;align-items:center;gap:10px;border-bottom:1px solid var(--line)}.recent-list>a>div{min-width:0}.recent-list b,.recent-list small{display:block}.recent-list b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.recent-list small{margin-top:4px;color:var(--muted);font-size:9px}.recent-list svg{color:var(--blue)}.recent-empty{margin-top:auto;padding-bottom:4px;border-bottom:1px solid var(--line);color:#989a93;font-size:12px}.start-error{margin:12px 0 0;padding:11px 13px;border-radius:10px;background:#f7e9e6;color:var(--red);font-size:11px}
+@media(max-width:1040px){.start-stage{grid-template-columns:minmax(440px,1.35fr) minmax(290px,.75fr)}}
+@media(max-width:760px){.home{padding:18px 16px 92px}.start-stage{display:block;min-height:0}.direct-entry{width:100%;min-height:510px;padding:28px 24px;border-radius:24px}.direct-entry h1{font-size:64px}.direct-action{right:24px;bottom:28px}.side-stage{display:block}.custom-entry{width:100%;min-height:350px;margin-top:12px;border-radius:24px}.recent{min-height:190px;margin-top:12px}}
 </style>

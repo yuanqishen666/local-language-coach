@@ -3,6 +3,8 @@ import type {
   ConversationEpisode,
   ConversationSetup,
   ConversationState,
+  DialogueDynamics,
+  DialoguePolicy,
   TurnLookupDecision,
 } from '../types.js'
 import { localeMeta } from '../../shared/locales.js'
@@ -59,11 +61,11 @@ export function turnAnalysisSystem(
   ].join('\n')
 }
 
-export function memoryAnalysisSystem(config: AppConfig, memories: Array<Record<string, unknown>>) {
+export function memoryAnalysisSystem(config: AppConfig, memories: Array<Record<string, unknown>>, state?: ConversationState, episodes: ConversationEpisode[] = []) {
   const memoryCatalog = memories.slice(0, 100).map((memory) => ({
     category: memory.category,
     key: memory.key,
-    value: memory.value,
+    valuePreview: typeof memory.value === 'string' ? memory.value.slice(0, 120) : '',
     tier: memory.tier,
     memoryType: memory.memoryType || memory.memory_type,
     topic: memory.topic,
@@ -71,8 +73,10 @@ export function memoryAnalysisSystem(config: AppConfig, memories: Array<Record<s
     pinned: memory.pinned,
   }))
   return [
-    'Perform only durable user-memory analysis for the latest learner turn. Return the structured memory analysis object. The recent dialogue is context; every new fact must come from the latest learner message.',
-    'Feedback language: ' + uiLanguage(config) + '. Confirmed non-sensitive memory catalog: ' + JSON.stringify(memoryCatalog) + '.',
+    'Analyze durable user memory and choose one compact conversation strategy for the latest learner turn. Return only the structured analysis object. The recent dialogue is context; every new fact must come from the latest learner message.',
+    'Feedback language: ' + uiLanguage(config) + '. Confirmed user memory catalog: ' + JSON.stringify(memoryCatalog) + '.',
+    'Recent conversation strategy state: ' + JSON.stringify({ recentMoves: state?.recentMoves || [], topicMomentum: state?.topicMomentum || [] }) + '.',
+    'Recent consolidated interaction evidence: ' + JSON.stringify(episodes.slice(-3).map((episode) => ({ topicArcs: episode.topicArcs, interactionSignals: episode.interactionSignals }))) + '.',
     '- Set disposition=remember when the latest learner explicitly states a user-owned fact likely to help in a future conversation: a stable preference, recurring constraint, personal background, or a durable answer to the partner’s question. Words such as like, dislike, love, hate, prefer, usually, always, or their equivalents normally express durable preferences.',
     '- A direct answer that chooses among options proposed by the partner is explicit. Use recent dialogue to resolve references such as “the quiet one”, but never copy a preference from the partner unless the learner actually adopts it.',
     '- Grammar or spelling mistakes do not make a fact ineligible. A statement that the learner prefers quiet, uncrowded beaches with clear water MUST be disposition=remember with a non-empty userFacts array.',
@@ -81,10 +85,18 @@ export function memoryAnalysisSystem(config: AppConfig, memories: Array<Record<s
     '- When a new fact changes or extends the same dimension as a catalog item, copy that catalog key exactly so confirmation updates the existing memory rather than creating a duplicate. The latest explicit statement wins.',
     '- memoryType is preference for likes and choices, constraint for hard requirements or prohibitions, profile for stable background or identity, learning for recurring language-learning needs, and episodic for a time-bound experience worth recalling later.',
     '- topic is a short, reusable lower-case English label such as travel, food, work, family, learning, or communication. importance is 0 to 1 and measures future usefulness, not emotional intensity.',
-    '- suggestedTier=core only for a stable hard constraint, essential profile fact, explicit always/never instruction, or long-term learning goal that should be visible on nearly every turn. Ordinary interests and domain preferences are long_term. Sensitive facts must never be suggested as core.',
+    '- suggestedTier=core only for a stable hard constraint, essential profile fact, explicit always/never instruction, or long-term learning goal that should be visible on nearly every turn. Ordinary interests and domain preferences are long_term.',
     '- Mark health, belief, precise location, identity, finance, or similarly private facts sensitive. Return at most 3 facts.',
     '- replyType classifies the response being prepared as casual, recommendation, planning, learning, factual, support, or other. relevantTopics contains short lower-case English topic labels useful for memory retrieval. These are soft retrieval signals, never hard filters.',
     '- relevantMemoryKeys contains exact catalog keys that would materially help answer the latest turn. Match meaning across languages and synonyms. For advice or recommendations, include applicable preferences and constraints. Return no unrelated keys.',
+    'Dialogue plan:',
+    '- anchorQuote is one short exact substring of the latest learner message that the reply must semantically take up. anchorMeaning states its intended meaning without inventing details.',
+    '- mode is casual, story, support, task, opinion, or learning. Choose exactly one primary move: answer, react, observe, associate, callback, share, or clarify.',
+    '- topic and branch are short lower-case English labels. Select at most one adjacent branch. contribution is one useful observation, view, association, contrast, or scene-grounded disclosure to add before any question; it is an idea, not final prose.',
+    '- questionPolicy=required only when a missing fact prevents a useful answer, optional only when one focused question has clear conversational value, otherwise none. Never manufacture a question merely to keep the conversation going.',
+    '- previousMoveOutcome describes the learner’s response to the immediately preceding partner move: continued, switched, rejected, corrected, unclear, or none. Use rejected/corrected only for explicit evidence, not a short answer alone.',
+    '- callbackMemoryKey is an exact catalog key only when an earlier fact should be explicitly brought back now. Usually return an empty string. Never use a recently rejected or closed branch.',
+    '- reopenBranch=true only when the latest learner explicitly brings back the same branch after previously rejecting or closing it. Never reopen a closed branch on the partner’s initiative.',
   ].join('\n')
 }
 
@@ -95,7 +107,8 @@ export function coachSystem(
   state: ConversationState,
   episodes: ConversationEpisode[],
   rescueRequired = false,
-  dynamics: { consecutiveQuestionTurns: number; recentOpeners: string[]; recentOnlyAgreement: boolean } = { consecutiveQuestionTurns: 0, recentOpeners: [], recentOnlyAgreement: false },
+  dynamics: DialogueDynamics = { assistantTurns: 0, questionTurns: 0, questionOnlyTurns: 0, questionTurnRate: 0, consecutiveQuestionTurns: 0, userAnswerBurden: 0, recentOpeners: [], recentOnlyAgreement: false, repeatedOpener: false },
+  dialoguePolicy: DialoguePolicy | null = null,
   lookupDecision: TurnLookupDecision | null = null,
   turnAnalysis: unknown = null,
 ) {
@@ -121,20 +134,24 @@ export function coachSystem(
     'Relevant earlier episodes, selected for this turn: ' + JSON.stringify(episodes) + '.',
     'Relevant user-confirmed memories, selected for this turn: ' + JSON.stringify(memories) + '.',
     'Recent dialogue rhythm: ' + JSON.stringify(dynamics) + '.',
+    'Authoritative local dialogue policy: ' + JSON.stringify(dialoguePolicy) + '. Obey its questionBudget and forbiddenBranches exactly.',
     'Current date and timezone: ' + new Date().toISOString() + ' / Asia/Shanghai.',
     'Ordinary web lookup is ' + (config.webLookup.enabled ? 'ENABLED' : 'DISABLED') + '. A locator explicitly written by the learner is a one-turn authorization even when ordinary lookup is disabled.',
     'Authoritative semantic lookup decision for the latest learner turn: ' + JSON.stringify(lookupDecision) + '. Copy this decision into lookup exactly; do not reclassify it while writing the conversational reply.',
     'Authoritative pre-reply analysis: ' + JSON.stringify(turnAnalysis) + '. Use the corrected intent when replying and copy its reconstruction, corrections, and userFacts exactly. Do not silently discard them.',
     'Conversation rules:',
-    '- First respond to the learner’s latest actual meaning. If they change topic, follow naturally. Never steer them back to an earlier topic just because it appeared in the setup.',
+    '- Uptake: first respond to the learner’s latest actual meaning identified by dialoguePlan.anchorQuote. If they change topic, follow naturally. Do not open with generic praise or merely paraphrase what they said.',
+    '- Contribution: add one relevant observation, view, association, contrast, or scene-grounded disclosure using only dialoguePlan.branch. Do not enumerate several possible directions. The reply must remain worthwhile if its question is removed.',
+    '- Opening: ask a question only when the local dialogue policy gives a questionBudget of 1. Never exceed that budget. Do not ask for information already present in recent dialogue or memory.',
     '- Stay in the partner identity when one exists, but behave like a real person rather than a teacher, examiner, guide, or task manager.',
+    '- In a direct chat without a defined partner, never invent a personal life, job, possessions, memories, or real-world experiences. Offer an observation or opinion instead. In a defined scene, share only details consistent with the supplied character and scene.',
     '- Match the natural amount of speech to the moment. A greeting can be brief; a story, opinion, or explanation may need several conversational sentences. Never turn it into a lecture or checklist.',
-    '- Ask at most one natural question. If recent turns already relied on questions, advance with a reaction, view, or relevant self-disclosure instead. Do not merely agree with everything.',
+    '- Do not merely agree with everything. A support turn responds to the feeling before any new direction; a task turn completes the task without engagement bait; a story turn follows its people and events before changing topic.',
     '- When the learner asks for an opinion, take a plausible in-character position. When they ask a clear question, answer it before asking anything back.',
     '- Never mention goals, steps, progress, completion, exercises, or what the learner should say next.',
     '- ' + targetLanguageStyle(config),
     '- Treat recent user statements as more authoritative than old summaries. If context is missing or conflicting, ask a short natural clarification instead of inventing a memory.',
-    '- Core memories are compact user-profile context that is always visible; obey applicable hard constraints but do not awkwardly mention unrelated profile facts. Retrieved long-term memories are turn-specific evidence. For advice and recommendations, apply relevant preferences and constraints. The latest learner statement always overrides an older memory. Never mention the memory system.',
+    '- Supplied memories are selected evidence, not material that must be mentioned. Obey applicable hard constraints, use other memories silently unless dialoguePlan explicitly selects a callback, and never awkwardly repeat profile facts. The latest learner statement always overrides an older memory. Never mention the memory system.',
     'Lookup decision rules:',
     '- Split the latest message into its real information needs. Stable advice, creative discussion, supplied-content analysis, greetings, and ordinary conversation use action=reply.',
     '- Use action=lookup only for information likely to have changed, an explicit request to look something up, or a user-specified external location. Do not use a keyword list and do not search merely because words such as today or current appear.',
@@ -237,13 +254,25 @@ export function setupCandidatesSystem(config: AppConfig) {
   ].join('\n')
 }
 
+export function setupLocalizationSystem(config: AppConfig) {
+  return [
+    'Localize one existing conversation setup for the interface language ' + uiLanguage(config) + '.',
+    interfaceLanguageStyle(config),
+    'Translate title, category, setting, partnerRole, relationship, tone, personalityCues, interests, currentMood, and topicSeed.',
+    'Preserve partnerName, openingLine, and difficulty exactly. openingLine remains in the learner target language.',
+    'Do not add, remove, reinterpret, or embellish any detail. Return the complete setup object.',
+  ].join('\n')
+}
+
 export function episodeSummarySystem(config: AppConfig) {
   return [
     'Create a high-recall, compact memory record for one older segment of an ongoing conversation.',
-    'Use ' + uiLanguage(config) + ' for thread, summary, openLoops, and keywords. Preserve target-language names or exact expressions when needed.',
+    'Use ' + uiLanguage(config) + ' for thread, summary, openLoops, keywords, and interaction signal values. topicArcs.topic is a short lower-case English retrieval label. Preserve target-language names or exact expressions when needed.',
     'Only record facts stated in the supplied messages. Do not infer motives, preferences, identity, or personal details.',
     'Every fact must cite one supplied message ID, include a short exact quote from that message, and identify whether it came from the user or partner.',
     'If a newer message updates an older fact, summarize the newest value and mention the change. Keep unresolved questions; omit resolved ones.',
+    'topicArcs records only clearly supported discussion threads. Mark a thread closed only after explicit rejection or completion, dormant after an explicit switch, otherwise active. Cite the supporting message IDs.',
+    'interactionSignals records only grounded conversational evidence: engaged, topic_switch, topic_rejected, assistant_corrected, or style_preference. Every signal needs one supplied user sourceMessageId and a short exact quote from that message. Do not infer personality from message length or silence.',
   ].join('\n')
 }
 
@@ -253,4 +282,8 @@ export function lookupSystem(config: AppConfig) {
 
 export function translationSystem(config: AppConfig) {
   return 'Translate the supplied ' + config.learning.targetLanguage + ' message into ' + uiLanguage(config) + ' as a native speaker would say it in this conversation. Preserve meaning and tone. ' + interfaceLanguageStyle(config) + ' Return only the translation field.'
+}
+
+export function interfaceValuesLocalizationSystem(config: AppConfig) {
+  return 'Translate each supplied interface-text value into ' + uiLanguage(config) + '. Preserve its exact meaning, names, numbers, corrections, preferences, constraints, and level of certainty. ' + interfaceLanguageStyle(config) + ' Return every supplied ID exactly once and no additional items.'
 }

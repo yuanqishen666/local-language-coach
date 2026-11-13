@@ -3,9 +3,9 @@ import { getConfig } from '../services/config.js'
 import { getModelClient, ProviderRequestError } from './provider.js'
 import type { ModelClient, ModelMessage } from './provider.js'
 import { parseModelJson } from '../utils/json.js'
-import { coachSystem, episodeSummarySystem, lookupReplySystem, lookupSystem, memoryAnalysisSystem, repairReplySystem, setupCandidatesSystem, translationSystem, turnAnalysisSystem } from './prompts.js'
-import { coachTurnSchema, episodeSummarySchema, memoryAnalysisSchema, responseJsonSchema, setupCandidatesSchema, termLookupSchema, translationSchema, turnAnalysisSchema } from './schemas.js'
-import type { CoachingResponse, ConversationEpisode, ConversationSetup, ConversationState, TurnLookupDecision } from '../types.js'
+import { coachSystem, episodeSummarySystem, interfaceValuesLocalizationSystem, lookupReplySystem, lookupSystem, memoryAnalysisSystem, repairReplySystem, setupCandidatesSystem, setupLocalizationSystem, translationSystem, turnAnalysisSystem } from './prompts.js'
+import { coachTurnSchema, episodeSummarySchema, memoryAnalysisSchema, memoryLocalizationSchema, responseJsonSchema, setupCandidateSchema, setupCandidatesSchema, termLookupSchema, translationSchema, turnAnalysisSchema } from './schemas.js'
+import type { CoachingResponse, ConversationEpisode, ConversationSetup, ConversationState, DialoguePlan, DialoguePolicy, TurnLookupDecision } from '../types.js'
 import { normalizeUiLocale } from '../../shared/locales.js'
 import {
   analyzeRecentDialogue,
@@ -17,8 +17,44 @@ import {
   type StoredConversationMessage,
 } from './context.js'
 import { runLookup } from '../lookup/router.js'
+import { matchesExpectedConversationLanguage, matchesExpectedLanguage } from './language.js'
+import { deriveDialoguePolicy, dialoguePolicyIssues, hasQuestion, isQuestionOnly, openerSimilarity } from './dialogue-policy.js'
 
 const repairableOutputCodes = new Set(['PROVIDER_EMPTY_RESPONSE', 'PROVIDER_INVALID_RESPONSE'])
+
+async function getRequestConfig(interfaceLocale?: string) {
+  const config = await getConfig()
+  config.ui.locale = normalizeUiLocale(interfaceLocale, config.ui.locale)
+  return config
+}
+
+function outputStrings(values: unknown[]): string[] {
+  return values.flatMap((value): string[] => {
+    if (typeof value === 'string') return value.trim() ? [value] : []
+    if (Array.isArray(value)) return outputStrings(value)
+    return []
+  })
+}
+
+function interfaceOutputMatches(config: Awaited<ReturnType<typeof getConfig>>, values: unknown[]) {
+  return outputStrings(values).every((value) => matchesExpectedLanguage(value, config.ui.locale))
+}
+
+function interfaceAggregateMatches(config: Awaited<ReturnType<typeof getConfig>>, values: unknown[]) {
+  const strings = outputStrings(values)
+  return matchesExpectedLanguage(strings.join('\n'), config.ui.locale) &&
+    strings.every((value) => matchesExpectedConversationLanguage(value, config.ui.locale))
+}
+
+function languageNeutral(value: string) {
+  return /^[\p{Lu}\d]{2,10}$/u.test(value) ||
+    /^\p{Lu}[\p{L}\p{M}'’_-]*(?:\s+\p{Lu}[\p{L}\p{M}'’_-]*){0,3}$/u.test(value) ||
+    /^[\d+().,:/@_-]+$/u.test(value)
+}
+
+function targetOutputMatches(config: Awaited<ReturnType<typeof getConfig>>, values: unknown[]) {
+  return outputStrings(values).every((value) => matchesExpectedConversationLanguage(value, config.learning.targetLanguageCode))
+}
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -184,6 +220,33 @@ export function normalizeMemoryAnalysis(value: unknown, latestUser: string, memo
   const source = record(value)
   const allowedMemoryKeys = new Set(memoryKeys.map((key) => text(key)).filter(Boolean))
   const replyType = text(source.replyType)
+  const planSource = record(source.dialoguePlan)
+  const anchorCandidate = text(planSource.anchorQuote)
+  const anchorQuote = anchorCandidate && latestUser.includes(anchorCandidate)
+    ? anchorCandidate
+    : latestUser.trim().slice(0, 120)
+  const mode = text(planSource.mode)
+  const move = text(planSource.move)
+  const questionPolicy = text(planSource.questionPolicy)
+  const previousMoveOutcome = text(planSource.previousMoveOutcome)
+  const callbackCandidate = text(planSource.callbackMemoryKey)
+  const callbackMemoryKey = allowedMemoryKeys.has(callbackCandidate) ? callbackCandidate : ''
+  const normalizedMove = (['answer', 'react', 'observe', 'associate', 'callback', 'share', 'clarify'].includes(move) ? move : 'react') as DialoguePlan['move']
+  const normalizedQuestionPolicy = (['none', 'optional', 'required'].includes(questionPolicy) ? questionPolicy : 'none') as DialoguePlan['questionPolicy']
+  const dialoguePlan: DialoguePlan = {
+    mode: (['casual', 'story', 'support', 'task', 'opinion', 'learning'].includes(mode) ? mode : 'casual') as DialoguePlan['mode'],
+    anchorQuote,
+    anchorMeaning: text(planSource.anchorMeaning, anchorQuote),
+    move: normalizedMove === 'callback' && !callbackMemoryKey ? 'observe' : normalizedMove,
+    topic: text(planSource.topic, 'general').toLocaleLowerCase().slice(0, 40),
+    branch: text(planSource.branch).toLocaleLowerCase().slice(0, 60),
+    contribution: text(planSource.contribution).slice(0, 280),
+    questionPolicy: normalizedQuestionPolicy,
+    questionPurpose: normalizedQuestionPolicy === 'none' ? '' : text(planSource.questionPurpose).slice(0, 180),
+    previousMoveOutcome: (['continued', 'switched', 'rejected', 'corrected', 'unclear', 'none'].includes(previousMoveOutcome) ? previousMoveOutcome : 'none') as DialoguePlan['previousMoveOutcome'],
+    callbackMemoryKey,
+    reopenBranch: Boolean(planSource.reopenBranch),
+  }
   return {
     disposition: text(source.disposition) === 'remember' ? 'remember' as const : 'ignore' as const,
     userFacts: (Array.isArray(source.userFacts) ? source.userFacts : []).map((item) => {
@@ -198,27 +261,24 @@ export function normalizeMemoryAnalysis(value: unknown, latestUser: string, memo
         memoryType: (['preference', 'constraint', 'profile', 'learning', 'episodic'].includes(memoryType) ? memoryType : 'profile') as 'preference' | 'constraint' | 'profile' | 'learning' | 'episodic',
         topic: text(fact.topic, 'general').toLocaleLowerCase().slice(0, 40),
         importance: Math.max(0, Math.min(1, Number(fact.importance) || 0.5)),
-        suggestedTier: (!sensitive && text(fact.suggestedTier) === 'core' ? 'core' : 'long_term') as 'core' | 'long_term',
+        suggestedTier: (text(fact.suggestedTier) === 'core' ? 'core' : 'long_term') as 'core' | 'long_term',
       }
     }).filter((item) => item.key && item.value && item.quote && latestUser.includes(item.quote)).slice(0, 3),
     replyType: (['casual', 'recommendation', 'planning', 'learning', 'factual', 'support', 'other'].includes(replyType) ? replyType : 'other') as 'casual' | 'recommendation' | 'planning' | 'learning' | 'factual' | 'support' | 'other',
     relevantTopics: strings(source.relevantTopics).map((topic) => topic.toLocaleLowerCase().slice(0, 40)).slice(0, 8),
     relevantMemoryKeys: strings(source.relevantMemoryKeys).filter((key) => allowedMemoryKeys.has(key)).slice(0, 8),
+    dialoguePlan,
   }
 }
 
-function questionOnly(value: string) {
-  const parts = value.split(/(?<=[.!?。！？])|\n+/u).map((part) => part.trim()).filter(Boolean)
-  return Boolean(parts.length && parts.every((part) => /[?？]\s*$/u.test(part)))
-}
-
-export function naturalReplyIssues(reply: string, messages: StoredConversationMessage[], lookupUsed: boolean) {
+export function naturalReplyIssues(reply: string, messages: StoredConversationMessage[], lookupUsed: boolean, dialoguePolicy?: DialoguePolicy) {
   const issues: string[] = []
   const clean = reply.trim()
   if (!clean) return ['empty reply']
-  if (questionOnly(clean)) issues.push('the reply is only questions and contains no substantive statement')
+  if (isQuestionOnly(clean)) issues.push('the reply is only questions and contains no substantive statement')
   const questionCount = (clean.match(/[?？]/gu) || []).length
   if (questionCount > 1) issues.push('the reply asks more than one question')
+  if (dialoguePolicy) issues.push(...dialoguePolicyIssues(clean, dialoguePolicy))
   if (/(根据(搜索|检索)结果|证据(表明|显示)|来源(表明|显示)|according to (the )?(search results|sources)|the evidence (shows|suggests)|as an ai)/iu.test(clean)) {
     issues.push('the reply uses report-like or AI-disclaimer language')
   }
@@ -226,6 +286,12 @@ export function naturalReplyIssues(reply: string, messages: StoredConversationMe
   const previous = [...messages].reverse().find((message) => message.role === 'assistant')?.content.trim() || ''
   const opener = (value: string) => value.replace(/^[-—–"“'‘\s]+/u, '').slice(0, 18).toLocaleLowerCase()
   if (previous && opener(previous).length >= 8 && opener(previous) === opener(clean)) issues.push('the reply repeats the previous opening phrase')
+  const currentOpening = clean.replace(/^[-—–"“'‘\s]+/u, '').slice(0, 48)
+  const repeatedOpening = messages.filter((message) => message.role === 'assistant').slice(-6)
+    .some((message) => currentOpening.length >= 8 && openerSimilarity(currentOpening, message.content.slice(0, 48)) >= 0.72)
+  if (repeatedOpening && !issues.includes('the reply repeats the previous opening phrase')) {
+    issues.push('the reply repeats a recent conversational opening pattern')
+  }
   return issues
 }
 
@@ -249,8 +315,8 @@ function selectedProvider(config: Awaited<ReturnType<typeof getConfig>>) {
   return provider
 }
 
-export async function suggestSetups(input: { domain?: string; place?: string; detail?: string }): Promise<ConversationSetup[]> {
-  const config = await getConfig()
+export async function suggestSetups(input: { domain?: string; place?: string; detail?: string; interfaceLocale?: string }): Promise<ConversationSetup[]> {
+  const config = await getRequestConfig(input.interfaceLocale)
   const client = await getModelClient()
   const provider = selectedProvider(config)
   const result = await generateStructured(client, [
@@ -287,9 +353,58 @@ export async function suggestSetups(input: { domain?: string; place?: string; de
         }).filter((setup) => setup.title && setup.openingLine),
       }
     },
-    usable: (value) => value.setups.length > 0,
+    retryHint: `Every title and setup-description field must be in ${config.ui.locale}; every openingLine must be in ${config.learning.targetLanguage}. Return a shorter complete object.`,
+    usable: (value) => value.setups.length > 0 && value.setups.every((setup) =>
+      interfaceAggregateMatches(config, [
+        setup.title, setup.category, setup.setting, setup.partnerRole, setup.relationship,
+        setup.tone, setup.personalityCues, setup.interests, setup.currentMood, setup.topicSeed,
+      ]) && targetOutputMatches(config, [setup.openingLine])),
   })
   return result.setups
+}
+
+export async function localizeConversationSetup(setup: ConversationSetup, interfaceLocale?: string): Promise<ConversationSetup> {
+  const config = await getRequestConfig(interfaceLocale)
+  const client = await getModelClient()
+  const provider = selectedProvider(config)
+  return generateStructured(client, [
+    { role: 'system', content: setupLocalizationSystem(config) },
+    { role: 'user', content: JSON.stringify(setup) },
+  ], {
+    name: 'conversation_setup_localization',
+    schema: setupCandidateSchema,
+    hint: '{"title":"","category":"","setting":"","partnerName":"","partnerRole":"","relationship":"","tone":"","personalityCues":[],"interests":[],"currentMood":"","topicSeed":"","openingLine":"","difficulty":""}',
+    temperature: 0.1,
+    attempts: 2,
+    maxOutputTokens: provider.maxOutputTokens,
+    retryHint: `Translate only the interface-description fields into ${config.ui.locale}. Preserve partnerName, openingLine, and difficulty exactly.`,
+    normalize(value) {
+      const source = record(value)
+      return {
+        title: text(source.title),
+        category: text(source.category),
+        setting: text(source.setting),
+        partnerName: text(source.partnerName),
+        partnerRole: text(source.partnerRole),
+        relationship: text(source.relationship),
+        tone: text(source.tone),
+        personalityCues: strings(source.personalityCues).slice(0, 3),
+        interests: strings(source.interests).slice(0, 3),
+        currentMood: text(source.currentMood),
+        topicSeed: text(source.topicSeed),
+        openingLine: text(source.openingLine),
+        difficulty: text(source.difficulty),
+      }
+    },
+    usable: (value) => Boolean(value.title && value.partnerRole &&
+      value.partnerName === setup.partnerName &&
+      value.openingLine === setup.openingLine &&
+      value.difficulty === setup.difficulty &&
+      interfaceAggregateMatches(config, [
+        value.title, value.category, value.setting, value.partnerRole, value.relationship,
+        value.tone, value.personalityCues, value.interests, value.currentMood, value.topicSeed,
+      ])),
+  })
 }
 
 interface CoachTurnInput {
@@ -298,10 +413,11 @@ interface CoachTurnInput {
   memories: Array<Record<string, unknown>>
   episodes: ConversationEpisode[]
   state: ConversationState
+  interfaceLocale?: string
 }
 
-export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: CoachingResponse; context: { tight: boolean; recentMessages: number; episodes: number; memories: number; memoryIds: string[] } }> {
-  const config = await getConfig()
+export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: CoachingResponse; context: { tight: boolean; recentMessages: number; episodes: number; memories: number; memoryIds: string[]; dialoguePlan: DialoguePlan; dialoguePolicy: DialoguePolicy } }> {
+  const config = await getRequestConfig(input.interfaceLocale)
   const client = await getModelClient()
   const provider = selectedProvider(config)
   const latestUser = [...input.messages].reverse().find((message) => message.role === 'user')?.content || ''
@@ -309,35 +425,61 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
   const memoryCatalog = input.memories.slice(0, 100)
   const memoryKeys = memoryCatalog.map((memory) => text(memory.key)).filter(Boolean)
   const analysisHistory = selectRecentHistory(input.messages, 1_400, 4)
+  const dynamics = analyzeRecentDialogue(input.messages)
   let memoryAnalysis = normalizeMemoryAnalysis({}, latestUser, memoryKeys)
   try {
     memoryAnalysis = await generateStructured(client, [
-      { role: 'system', content: memoryAnalysisSystem(config, memoryCatalog) },
+      { role: 'system', content: memoryAnalysisSystem(config, memoryCatalog, input.state, input.episodes) },
       ...analysisHistory,
     ], {
       name: 'memory_analysis',
       schema: memoryAnalysisSchema,
-      hint: '{"disposition":"ignore","userFacts":[],"replyType":"casual","relevantTopics":[],"relevantMemoryKeys":[]}',
+      hint: '{"disposition":"ignore","userFacts":[],"replyType":"casual","relevantTopics":[],"relevantMemoryKeys":[],"dialoguePlan":{"mode":"casual","anchorQuote":"latest words","anchorMeaning":"meaning","move":"react","topic":"general","branch":"","contribution":"one useful reaction","questionPolicy":"none","questionPurpose":"","previousMoveOutcome":"none","callbackMemoryKey":"","reopenBranch":false}}',
       temperature: 0,
       attempts: 2,
       maxOutputTokens: Math.min(provider.maxOutputTokens, 800),
-      retryHint: 'Return the complete memory analysis JSON including replyType and relevantTopics. Explicit durable likes, dislikes, preferences, recurring constraints, and personal background require disposition=remember and at least one grounded fact. Copy matching catalog keys exactly.',
+      retryHint: 'Return the complete memory and dialogue-plan JSON. anchorQuote must be copied from the latest learner message. Explicit durable likes, dislikes, preferences, recurring constraints, and personal background require disposition=remember and at least one grounded fact. Copy matching catalog keys exactly.',
       normalize: (value) => normalizeMemoryAnalysis(value, latestUser, memoryKeys),
-      usable: (value) => value.disposition === 'remember' ? value.userFacts.length > 0 : value.userFacts.length === 0,
+      usable: (value) => (value.disposition === 'remember' ? value.userFacts.length > 0 : value.userFacts.length === 0) &&
+        value.userFacts.every((fact) => matchesExpectedLanguage(fact.value, config.ui.locale)) &&
+        Boolean(value.dialoguePlan.anchorQuote && latestUser.includes(value.dialoguePlan.anchorQuote)),
     })
   } catch (error) {
     if (!(error instanceof ProviderRequestError) || !repairableOutputCodes.has(error.code)) throw error
     // Memory extraction is valuable but auxiliary. A malformed memory-analysis
     // response must not discard an otherwise answerable conversation turn.
   }
+  if (!input.setup && memoryAnalysis.dialoguePlan.move === 'share') {
+    memoryAnalysis.dialoguePlan.move = 'observe'
+  }
+  const recentMemoryIds = new Set(input.state.recentMoves.slice(-3).flatMap((move) => move.memoryIds))
+  const callbackMemory = memoryCatalog.find((memory) => text(memory.key) === memoryAnalysis.dialoguePlan.callbackMemoryKey)
+  const lastMentionedAt = callbackMemory ? Date.parse(text(callbackMemory.lastMentionedAt)) : Number.NaN
+  const explicitlyReopenedByUser = callbackMemory && [text(callbackMemory.key), text(callbackMemory.value)]
+    .filter(Boolean)
+    .some((value) => latestUser.toLocaleLowerCase().includes(value.toLocaleLowerCase()))
+  const callbackCoolingDown = Number.isFinite(lastMentionedAt) && Date.now() - lastMentionedAt < 24 * 60 * 60 * 1_000
+  if (callbackMemory && (recentMemoryIds.has(text(callbackMemory.id)) || (callbackCoolingDown && !explicitlyReopenedByUser))) {
+    memoryAnalysis.dialoguePlan.callbackMemoryKey = ''
+    if (memoryAnalysis.dialoguePlan.move === 'callback') memoryAnalysis.dialoguePlan.move = 'observe'
+  }
+  const relevantMemoryKeys = [...new Set([
+    ...memoryAnalysis.relevantMemoryKeys,
+    memoryAnalysis.dialoguePlan.callbackMemoryKey,
+  ].filter(Boolean))]
+  const cooldownMemoryIds = input.state.recentMoves.length
+    ? input.state.recentMoves.slice(-3).flatMap((move) => move.memoryIds)
+    : input.state.recentMemoryIds.slice(-8)
   const analysisRelevantMemories = selectRelevantMemories(
     input.memories,
     latestUser,
     input.state.currentTopic,
     4,
-    memoryAnalysis.relevantMemoryKeys,
+    relevantMemoryKeys,
     memoryAnalysis.relevantTopics,
     memoryAnalysis.replyType,
+    cooldownMemoryIds,
+    [memoryAnalysis.dialoguePlan.anchorMeaning, memoryAnalysis.dialoguePlan.topic, memoryAnalysis.dialoguePlan.branch].join(' '),
   )
   const turnAnalysis = await generateStructured(client, [
     { role: 'system', content: turnAnalysisSystem(config, rescueRequired, analysisRelevantMemories) },
@@ -356,25 +498,32 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
       value.lookup.parts.every((part) => part.subject && (part.reason !== 'unknown' || value.lookup.action === 'clarify')) &&
       (value.lookup.action !== 'lookup' || (value.lookup.parts.some((part) => part.needsLookup) && (value.lookup.query || value.lookup.locator))) &&
       (value.lookup.action !== 'reply' || value.lookup.parts.every((part) => !part.needsLookup)) &&
-      (!rescueRequired || value.reconstruction),
+      (!rescueRequired || value.reconstruction) &&
+      interfaceOutputMatches(config, [
+        value.reconstruction?.explanation,
+        value.corrections.map((correction) => correction.explanation),
+      ]),
     ),
   })
   const lookupDecision = turnAnalysis.lookup
+  const dialoguePolicy = deriveDialoguePolicy(memoryAnalysis.dialoguePlan, dynamics, lookupDecision, input.state)
 
   const run = async (tight: boolean) => {
-    const relevantEpisodes = selectRelevantEpisodes(input.episodes, latestUser, input.state.currentTopic, tight ? 2 : 4)
+    const retrievalContext = [memoryAnalysis.dialoguePlan.anchorMeaning, memoryAnalysis.dialoguePlan.topic, dialoguePolicy.allowedBranch].join(' ')
+    const relevantEpisodes = selectRelevantEpisodes(input.episodes, latestUser, input.state.currentTopic, tight ? 2 : 4, retrievalContext)
     const relevantMemories = selectRelevantMemories(
       input.memories,
       latestUser,
       input.state.currentTopic,
       tight ? 2 : 4,
-      memoryAnalysis.relevantMemoryKeys,
+      relevantMemoryKeys,
       memoryAnalysis.relevantTopics,
       memoryAnalysis.replyType,
+      cooldownMemoryIds,
+      retrievalContext,
     )
-    const dynamics = analyzeRecentDialogue(input.messages)
-    const authoritativeAnalysis = { ...turnAnalysis, ...memoryAnalysis }
-    const system = coachSystem(config, input.setup, relevantMemories, input.state, relevantEpisodes, rescueRequired, dynamics, lookupDecision, authoritativeAnalysis)
+    const authoritativeAnalysis = { ...turnAnalysis, ...memoryAnalysis, dialoguePolicy }
+    const system = coachSystem(config, input.setup, relevantMemories, input.state, relevantEpisodes, rescueRequired, dynamics, dialoguePolicy, lookupDecision, authoritativeAnalysis)
     const historyBudget = Math.max(900, providerInputBudget(provider, tight) - approximateTokens(system) - 180)
     const history = selectRecentHistory(input.messages, historyBudget, tight ? 6 : 10)
     const generated = await generateStructured(client, [
@@ -404,7 +553,8 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
         value.roleReply.trim() &&
         value.lookup.parts.length > 0 &&
         (value.lookup.action !== 'lookup' || value.lookup.query || value.lookup.locator) &&
-        (!rescueRequired || value.reconstruction),
+        (!rescueRequired || value.reconstruction) &&
+        targetOutputMatches(config, [value.roleReply]),
       ),
     })
     return { generated, relevantEpisodes, relevantMemories, history }
@@ -435,7 +585,8 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
       maxResults: config.webLookup.maxResults,
     })
     lookupUsed = outcome.kind !== 'disabled'
-    if (outcome.presentation?.text && outcome.presentation.preserveText) {
+    if (outcome.presentation?.text && outcome.presentation.preserveText &&
+      matchesExpectedConversationLanguage(outcome.presentation.text, config.learning.targetLanguageCode)) {
       preserveGroundedText = true
       finalGenerated = {
         ...output.generated,
@@ -472,13 +623,17 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
         attempts: 2,
         maxOutputTokens: provider.maxOutputTokens,
         normalize: normalizeCoachResponse,
-        usable: (value) => Boolean(value.roleReply.trim() && (!rescueRequired || value.reconstruction)),
+        retryHint: `Write roleReply only in ${config.learning.targetLanguage}. Return every required JSON field without citations.`,
+        usable: (value) => Boolean(value.roleReply.trim() &&
+          targetOutputMatches(config, [value.roleReply]) &&
+          (!rescueRequired || value.reconstruction)),
       })
       finalGenerated.lookup = output.generated.lookup
     }
   }
 
-  const issues = naturalReplyIssues(finalGenerated.roleReply, input.messages, lookupUsed)
+  const issues = naturalReplyIssues(finalGenerated.roleReply, input.messages, lookupUsed, dialoguePolicy)
+  if (preserveGroundedText && issues.length) preserveGroundedText = false
   if (issues.length && !preserveGroundedText) {
     try {
       finalGenerated = await generateStructured(client, [
@@ -492,7 +647,11 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
         attempts: 2,
         maxOutputTokens: provider.maxOutputTokens,
         normalize: normalizeCoachResponse,
-        usable: (value) => Boolean(value.roleReply.trim() && naturalReplyIssues(value.roleReply, input.messages, lookupUsed).length === 0 && (!rescueRequired || value.reconstruction)),
+        retryHint: `Write roleReply only in ${config.learning.targetLanguage}. Preserve the metadata and return the complete JSON object.`,
+        usable: (value) => Boolean(value.roleReply.trim() &&
+          targetOutputMatches(config, [value.roleReply]) &&
+          naturalReplyIssues(value.roleReply, input.messages, lookupUsed, dialoguePolicy).length === 0 &&
+          (!rescueRequired || value.reconstruction)),
       })
     } catch {
       // Repair is a best-effort polish. A provider formatting failure here must
@@ -505,6 +664,7 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
   finalGenerated.reconstruction = turnAnalysis.reconstruction
   finalGenerated.corrections = turnAnalysis.corrections
   finalGenerated.statePatch.userFacts = memoryAnalysis.userFacts
+  if (!hasQuestion(finalGenerated.roleReply)) finalGenerated.statePatch.openedLoops = []
 
   return {
     coaching: {
@@ -523,12 +683,14 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
       episodes: output.relevantEpisodes.length,
       memories: output.relevantMemories.length,
       memoryIds: output.relevantMemories.map((memory) => text(memory.id)).filter(Boolean),
+      dialoguePlan: memoryAnalysis.dialoguePlan,
+      dialoguePolicy,
     },
   }
 }
 
-export async function summarizeEpisode(messages: StoredConversationMessage[]) {
-  const config = await getConfig()
+export async function summarizeEpisode(messages: StoredConversationMessage[], interfaceLocale?: string) {
+  const config = await getRequestConfig(interfaceLocale)
   const client = await getModelClient()
   const provider = selectedProvider(config)
   const suppliedMessages = new Map(messages.map((message) => [message.id, message]))
@@ -538,7 +700,7 @@ export async function summarizeEpisode(messages: StoredConversationMessage[]) {
   ], {
     name: 'conversation_episode',
     schema: episodeSummarySchema,
-    hint: '{"thread":"","summary":"","facts":[],"openLoops":[],"keywords":[]}',
+    hint: '{"thread":"","summary":"","facts":[],"openLoops":[],"keywords":[],"topicArcs":[],"interactionSignals":[]}',
     temperature: 0.15,
     attempts: 1,
     maxOutputTokens: Math.min(provider.maxOutputTokens, 1_000),
@@ -563,14 +725,40 @@ export async function summarizeEpisode(messages: StoredConversationMessage[]) {
         }),
         openLoops: strings(source.openLoops).slice(0, 8),
         keywords: strings(source.keywords).slice(0, 12),
+        topicArcs: (Array.isArray(source.topicArcs) ? source.topicArcs : []).map((item) => {
+          const arc = record(item)
+          const status = text(arc.status)
+          return {
+            topic: text(arc.topic).toLocaleLowerCase().slice(0, 60),
+            status: (['active', 'dormant', 'closed'].includes(status) ? status : 'active') as 'active' | 'dormant' | 'closed',
+            sourceMessageIds: strings(arc.sourceMessageIds).filter((id) => suppliedMessages.has(id)).slice(0, 8),
+          }
+        }).filter((arc) => /^[a-z0-9][a-z0-9 -]*$/u.test(arc.topic) && arc.sourceMessageIds.length).slice(0, 8),
+        interactionSignals: (Array.isArray(source.interactionSignals) ? source.interactionSignals : []).map((item) => {
+          const signal = record(item)
+          const kind = text(signal.kind)
+          return {
+            kind: (['engaged', 'topic_switch', 'topic_rejected', 'assistant_corrected', 'style_preference'].includes(kind) ? kind : 'engaged') as 'engaged' | 'topic_switch' | 'topic_rejected' | 'assistant_corrected' | 'style_preference',
+            value: text(signal.value),
+            sourceMessageId: text(signal.sourceMessageId),
+            quote: text(signal.quote),
+          }
+        }).filter((signal) => {
+          const source = suppliedMessages.get(signal.sourceMessageId)
+          return Boolean(signal.value && signal.quote && source?.role === 'user' && source.content.includes(signal.quote))
+        }).slice(0, 8),
       }
     },
-    usable: (value) => Boolean(value.thread && value.summary),
+    retryHint: `Write thread, summary, openLoops, keywords, topicArcs, and interactionSignals only in ${config.ui.locale}. Return the complete compact JSON object.`,
+    usable: (value) => Boolean(value.thread && value.summary && interfaceAggregateMatches(config, [
+      value.thread, value.summary, value.openLoops, value.keywords,
+      value.interactionSignals.map((signal) => signal.value),
+    ])),
   })
 }
 
-export async function lookupTerm(input: { term: string; sentence: string; previous?: string; setup?: unknown }) {
-  const config = await getConfig()
+export async function lookupTerm(input: { term: string; sentence: string; previous?: string; setup?: unknown; interfaceLocale?: string }) {
+  const config = await getRequestConfig(input.interfaceLocale)
   const client = await getModelClient()
   const provider = selectedProvider(config)
   return generateStructured(client, [
@@ -600,12 +788,20 @@ export async function lookupTerm(input: { term: string; sentence: string; previo
         regionalNotes: text(source.regionalNotes),
       }
     },
-    usable: (value) => Boolean(value.contextMeaning),
+    retryHint: `Write every explanation, definition, label, note, and example translation only in ${config.ui.locale}. Examples and the studied expression remain in ${config.learning.targetLanguage}.`,
+    usable: (value) => Boolean(value.contextMeaning && interfaceOutputMatches(config, [
+      value.partOfSpeech,
+      value.contextMeaning,
+      value.forms.map((form) => form.label),
+      value.senses.flatMap((sense) => [sense.meaning, sense.translation]),
+      value.register,
+      value.regionalNotes,
+    ])),
   })
 }
 
-export async function translateMessage(content: string, setup: ConversationSetup | null) {
-  const config = await getConfig()
+export async function translateMessage(content: string, setup: ConversationSetup | null, interfaceLocale?: string) {
+  const config = await getRequestConfig(interfaceLocale)
   const client = await getModelClient()
   const provider = selectedProvider(config)
   const result = await generateStructured(client, [
@@ -619,7 +815,55 @@ export async function translateMessage(content: string, setup: ConversationSetup
     attempts: 2,
     maxOutputTokens: provider.maxOutputTokens,
     normalize(value) { return { translation: text(record(value).translation || record(value).text) } },
-    usable: (value) => Boolean(value.translation),
+    retryHint: `Return the translation only in ${config.ui.locale}. Do not use the learner's target language unless it is the same language.`,
+    usable: (value) => Boolean(value.translation && (
+      matchesExpectedLanguage(value.translation, config.ui.locale) ||
+      (value.translation === content.trim() && languageNeutral(value.translation))
+    )),
   })
   return result.translation
 }
+
+export async function localizeInterfaceValues(items: Array<{ id: string; value: string }>, interfaceLocale?: string) {
+  if (!items.length) return []
+  const config = await getRequestConfig(interfaceLocale)
+  const client = await getModelClient()
+  const provider = selectedProvider(config)
+  const localized: Array<{ id: string; value: string }> = []
+  for (let offset = 0; offset < items.length; offset += 20) {
+    const batch = items.slice(offset, offset + 20)
+    const expectedIds = new Set(batch.map((item) => item.id))
+    const result = await generateStructured(client, [
+      { role: 'system', content: interfaceValuesLocalizationSystem(config) },
+      { role: 'user', content: JSON.stringify({ items: batch }) },
+    ], {
+      name: 'memory_localization',
+      schema: memoryLocalizationSchema,
+      hint: '{"items":[{"id":"same-id","value":"localized value"}]}',
+      temperature: 0.1,
+      attempts: 2,
+      maxOutputTokens: provider.maxOutputTokens,
+      retryHint: `Return every supplied ID exactly once. Write every value only in ${config.ui.locale}.`,
+      normalize(value) {
+        const source = record(value)
+        return {
+          items: (Array.isArray(source.items) ? source.items : []).map((item) => ({
+            id: text(record(item).id),
+            value: text(record(item).value),
+          })).filter((item) => expectedIds.has(item.id) && item.value),
+        }
+      },
+      usable: (value) => value.items.length === expectedIds.size &&
+        new Set(value.items.map((item) => item.id)).size === expectedIds.size &&
+        value.items.every((item) => {
+          const original = batch.find((source) => source.id === item.id)?.value || ''
+          return matchesExpectedLanguage(item.value, config.ui.locale) ||
+            (item.value === original && languageNeutral(item.value))
+        }),
+    })
+    localized.push(...result.items)
+  }
+  return localized
+}
+
+export const localizeMemoryValues = localizeInterfaceValues

@@ -7,6 +7,7 @@ export interface ConversationListItem {
   kind: ConversationKind
   firstMessage: string
   status: 'active' | 'archived'
+  interfaceLocale?: string
   createdAt: string
   updatedAt: string
 }
@@ -20,7 +21,10 @@ export function truncateConversationTitle(value: string, limit = 80) {
   return characters.length > limit ? `${characters.slice(0, limit).join('')}…` : characters.join('')
 }
 
-export function conversationDisplayTitle(item: ConversationListItem, directFallback: string) {
+export function conversationDisplayTitle(item: ConversationListItem, directFallback: string, sceneFallback = directFallback, interfaceLocale?: string) {
+  if (item.kind === 'scene' && interfaceLocale && item.interfaceLocale !== interfaceLocale) {
+    return sceneFallback
+  }
   const source = item.kind === 'direct'
     ? compactConversationText(item.firstMessage) || item.title || directFallback
     : item.title || compactConversationText(item.firstMessage) || directFallback

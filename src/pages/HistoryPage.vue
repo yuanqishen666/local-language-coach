@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '../stores/app'
@@ -16,11 +16,16 @@ const deleting = ref(false)
 const loadError = ref('')
 
 async function load() {
+  const requestedLocale = String(locale.value)
   loadError.value = ''
-  try { items.value = await api.get<ConversationListItem[]>('/conversations') }
-  catch { loadError.value = t('common.operationFailed') }
+  try {
+    const loaded = await api.get<ConversationListItem[]>(`/conversations?interfaceLocale=${encodeURIComponent(requestedLocale)}`)
+    if (requestedLocale === String(locale.value)) items.value = loaded
+  }
+  catch { if (requestedLocale === String(locale.value)) loadError.value = t('common.operationFailed') }
 }
 onMounted(load)
+watch(locale, load)
 const kindCounts = computed(() => ({
   direct: items.value.filter((item) => item.kind === 'direct').length,
   scene: items.value.filter((item) => item.kind === 'scene').length,
@@ -34,7 +39,7 @@ function kindLabel(kind: ConversationKind) {
   return kind === 'direct' ? t('history.direct') : t('history.scene')
 }
 function displayTitle(item: ConversationListItem) {
-  return conversationDisplayTitle(item, t('home.openTitle'))
+  return conversationDisplayTitle(item, t('home.openTitle'), t('history.scene'), String(locale.value))
 }
 
 async function toggleArchive(item: ConversationListItem) {
@@ -96,4 +101,8 @@ function dateTime(value: string) { return new Intl.DateTimeFormat(String(locale.
 <style scoped>
 .kind-tabs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}.kind-tabs button{min-height:58px;padding:0 16px;border:1px solid var(--line);border-radius:13px;background:rgba(255,255,255,.42);color:var(--muted);display:grid;grid-template-columns:20px 1fr auto;align-items:center;gap:9px;text-align:left;font-size:12px;font-weight:750}.kind-tabs button b{min-width:24px;height:24px;padding:0 7px;border-radius:12px;background:#e8ebe5;display:grid;place-items:center;font-size:11px}.kind-tabs button.active{background:var(--green);border-color:var(--green);color:white;box-shadow:0 7px 20px rgba(26,75,63,.12)}.kind-tabs button.active b{background:rgba(255,255,255,.16)}.filters{display:flex;gap:6px;margin-bottom:18px}.filters button{height:33px;padding:0 12px;border:1px solid var(--line);border-radius:9px;background:transparent;color:var(--muted);font-size:11px}.filters button.active{background:#e2e9e2;color:var(--green);border-color:#cdd8cf;font-weight:750}.history-list{display:grid;gap:10px}.history-item{min-height:112px;position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;overflow:hidden;transition:.16s}.history-item:hover{transform:translateX(3px);border-color:#bdc5bc}.history-open{padding:17px 10px 17px 20px;display:grid;grid-template-columns:48px minmax(0,1fr) auto 20px;gap:17px;align-items:center;min-width:0}.history-date{border-right:1px solid var(--line)}.history-date b,.history-date span{display:block}.history-date b{font-size:21px}.history-date span{font-size:11px;text-transform:uppercase;color:var(--muted)}.history-copy{min-width:0}.history-list h2{font-size:14px;margin:7px 0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.history-copy p{font-size:11px;line-height:1.45;color:var(--muted);margin:0 0 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.history-list small{font-size:11px;color:var(--muted)}.badge.archived{background:#e8e8e3;color:#747870}.continue-label{font-size:11px;color:var(--green);white-space:nowrap}.history-actions{display:flex}.history-actions button{width:62px;border:0;border-left:1px solid var(--line);background:transparent;color:var(--muted);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:11px}.history-actions button:hover{background:#edf1e9;color:var(--green)}.history-actions .delete-conversation:hover{background:#f8eae6;color:var(--red)}.load-error{padding:12px;border-radius:9px;background:#f8eae6;color:var(--red);font-size:11px}.confirm-backdrop{position:fixed;inset:0;background:rgba(27,31,26,.32);z-index:100;display:grid;place-items:center;padding:20px}.confirm-dialog{width:min(430px,100%);padding:27px}.confirm-icon{width:48px;height:48px;border-radius:14px;background:#f5e7e3;color:var(--red);display:grid;place-items:center;margin-bottom:18px}.confirm-dialog h2{font-size:22px;margin:0}.confirm-kind{display:inline-flex;margin-top:12px;padding:4px 8px;border-radius:7px;background:#e8eee8;color:var(--green);font-size:11px;font-weight:750}.confirm-dialog>p{font-size:13px;font-weight:750;line-height:1.55;margin:9px 0 7px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}.confirm-dialog blockquote{margin:0 0 10px;padding:9px 11px;border-left:2px solid var(--green-2);background:#f4f5f0;border-radius:0 8px 8px 0;color:var(--muted);font-size:11px;line-height:1.55}.confirm-dialog>small{display:block;color:var(--muted);font-size:11px;line-height:1.7}.confirm-dialog footer{display:flex;justify-content:flex-end;gap:8px;margin-top:24px}.btn.danger.solid{background:var(--red);border-color:var(--red);color:white}
 @media(max-width:680px){.kind-tabs{grid-template-columns:1fr}.kind-tabs button{min-height:48px}.history-open{grid-template-columns:38px minmax(0,1fr) 15px;padding-left:13px}.continue-label{display:none}.history-actions button{width:48px}.history-actions button span{display:none}}
+</style>
+<style scoped>
+.history-page{max-width:1240px}.history-page .page-head{margin-bottom:24px}.history-page .subhead{display:none}.kind-tabs{display:flex;gap:6px;margin-bottom:10px}.kind-tabs button{min-height:36px;height:36px;padding:0 13px;display:flex;grid-template-columns:none;gap:7px;border:0;border-radius:999px;background:transparent;color:var(--muted);font-size:11px;font-weight:600}.kind-tabs button svg{display:none}.kind-tabs button b{min-width:20px;height:20px;padding:0 6px;background:#e4e0d6;font-size:9px}.kind-tabs button.active{background:var(--ink);color:white;box-shadow:none}.kind-tabs button.active b{background:rgba(255,255,255,.16)}.filters{display:flex;justify-content:flex-end;gap:5px;margin:-46px 0 22px}.filters button{height:36px;padding:0 13px;border:0;border-radius:999px}.filters button.active{background:#dfe5dc;color:var(--ink)}.history-list{display:grid;gap:0;border-top:1px solid var(--line)}.history-item{min-height:112px;border-radius:0;border-bottom:1px solid var(--line);background:transparent;overflow:visible}.history-item:hover{padding:0 10px;background:rgba(255,255,255,.34);transform:none}.history-open{padding:16px 0;grid-template-columns:70px minmax(0,1fr) auto 20px;gap:18px}.history-date{border:0}.history-date b{font-size:25px}.history-date span{font-size:10px}.history-list h2{font-size:15px}.history-list small{font-size:10px}.continue-label{color:var(--blue)}.history-actions button{width:50px;border-left:0}.history-actions button span{display:none}.history-actions button:hover{background:transparent;color:var(--blue)}.confirm-dialog{border-radius:24px}.confirm-icon{border-radius:50%}
+@media(max-width:680px){.filters{justify-content:flex-start;margin:0 0 16px}.kind-tabs{overflow-x:auto}.history-open{grid-template-columns:44px minmax(0,1fr) 16px}.history-actions{display:none}}
 </style>

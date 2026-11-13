@@ -21,6 +21,13 @@ test('scene chats retain the scene title and expose the first user message as co
   assert.equal(conversationPreview(scene), 'Could I get a latte?')
 })
 
+test('scene titles from another interface language use the current localized fallback', () => {
+  assert.equal(
+    conversationDisplayTitle({ ...scene, interfaceLocale: 'zh-CN' }, 'Direct chat', 'Custom conversation', 'es-419'),
+    'Custom conversation',
+  )
+})
+
 test('conversation text collapses line breaks and repeated whitespace', () => {
   assert.equal(compactConversationText(' one\n\n two  three '), 'one two three')
 })

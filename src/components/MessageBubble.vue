@@ -33,10 +33,6 @@ const coachingVisible = computed(() => {
   if (props.message.role !== 'user' || !props.feedback) return false
   const savedLocale = props.feedback.interfaceLocale
   if (savedLocale) return savedLocale === String(locale.value)
-  const explanation = [props.feedback.reconstruction?.explanation, ...(props.feedback.corrections || []).map((item) => item.explanation)].filter(Boolean).join(' ')
-  if (!explanation) return false
-  if (String(locale.value) === 'zh-CN') return /[\u3400-\u9fff]/u.test(explanation)
-  if (String(locale.value) === 'en-US') return !/[\u3400-\u9fff]/u.test(explanation)
   return false
 })
 const memoryCandidates = computed(() => {
@@ -54,10 +50,11 @@ async function toggleTranslation() {
   translating.value = true
   translationError.value = ''
   try {
-    const data = await api.post<{ translation: string }>(`/conversations/${route.params.id}/messages/${props.message.id}/translation`)
+    const requestedLocale = String(locale.value)
+    const data = await api.post<{ translation: string; interfaceLocale: string }>(`/conversations/${route.params.id}/messages/${props.message.id}/translation`, { interfaceLocale: requestedLocale })
     props.message.meta.roleReplyTranslations ||= {}
-    props.message.meta.roleReplyTranslations[String(locale.value)] = data.translation
-    showTranslation.value = true
+    props.message.meta.roleReplyTranslations[data.interfaceLocale] = data.translation
+    showTranslation.value = data.interfaceLocale === String(locale.value)
   } catch (error) {
     translationError.value = translationErrorMessage(error, String(locale.value))
   } finally { translating.value = false }

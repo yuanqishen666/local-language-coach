@@ -40,6 +40,21 @@ export const turnAnalysisSchema = z.object({
   corrections: z.array(correctionSchema),
 })
 
+export const dialoguePlanSchema = z.object({
+  mode: z.enum(['casual', 'story', 'support', 'task', 'opinion', 'learning']),
+  anchorQuote: z.string(),
+  anchorMeaning: z.string(),
+  move: z.enum(['answer', 'react', 'observe', 'associate', 'callback', 'share', 'clarify']),
+  topic: z.string(),
+  branch: z.string(),
+  contribution: z.string(),
+  questionPolicy: z.enum(['none', 'optional', 'required']),
+  questionPurpose: z.string(),
+  previousMoveOutcome: z.enum(['continued', 'switched', 'rejected', 'corrected', 'unclear', 'none']),
+  callbackMemoryKey: z.string(),
+  reopenBranch: z.boolean(),
+})
+
 export const memoryAnalysisSchema = z.object({
   disposition: z.enum(['remember', 'ignore']),
   userFacts: z.array(z.object({
@@ -55,6 +70,7 @@ export const memoryAnalysisSchema = z.object({
   replyType: z.enum(['casual', 'recommendation', 'planning', 'learning', 'factual', 'support', 'other']),
   relevantTopics: z.array(z.string()),
   relevantMemoryKeys: z.array(z.string()),
+  dialoguePlan: dialoguePlanSchema,
 })
 
 /** The only synchronous contract used for a conversation turn. */
@@ -117,9 +133,24 @@ export const episodeSummarySchema = z.object({
   })),
   openLoops: z.array(z.string()),
   keywords: z.array(z.string()),
+  topicArcs: z.array(z.object({
+    topic: z.string(),
+    status: z.enum(['active', 'dormant', 'closed']),
+    sourceMessageIds: z.array(z.string()),
+  })),
+  interactionSignals: z.array(z.object({
+    kind: z.enum(['engaged', 'topic_switch', 'topic_rejected', 'assistant_corrected', 'style_preference']),
+    value: z.string(),
+    sourceMessageId: z.string(),
+    quote: z.string(),
+  })),
 })
 
 export const translationSchema = z.object({ translation: z.string() })
+
+export const memoryLocalizationSchema = z.object({
+  items: z.array(z.object({ id: z.string(), value: z.string() })),
+})
 
 export const termLookupSchema = z.object({
   term: z.string(),

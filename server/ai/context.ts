@@ -4,8 +4,13 @@ import type {
   ConversationSetup,
   ConversationState,
   ConversationStatePatch,
+  DialogueDynamics,
+  DialoguePlan,
+  DialoguePolicy,
   ProviderConfig,
+  TopicMomentum,
 } from '../types.js'
+import { hasQuestion, isQuestionOnly, openerSimilarity } from './dialogue-policy.js'
 
 export interface StoredConversationMessage {
   id: string
@@ -51,21 +56,32 @@ export function normalizeConversationSetup(value: unknown): ConversationSetup | 
   }
 }
 
-export function analyzeRecentDialogue(messages: StoredConversationMessage[]) {
-  const assistant = messages.filter((message) => message.role === 'assistant').slice(-4)
-  const questionOnly = (value: string) => {
-    const parts = value.split(/(?<=[.!?。！？])|\n+/u).map((part) => part.trim()).filter(Boolean)
-    return Boolean(parts.length && parts.every((part) => /[?？]\s*$/u.test(part)))
-  }
+export function analyzeRecentDialogue(messages: StoredConversationMessage[]): DialogueDynamics {
+  const recent = messages.slice(-12)
+  const assistant = recent.filter((message) => message.role === 'assistant').slice(-6)
   const opener = (value: string) => value.trim().replace(/^[-—–"“'‘\s]+/u, '').slice(0, 24).toLocaleLowerCase()
   const recentOpeners = assistant.map((message) => opener(message.content)).filter(Boolean)
-  const consecutiveQuestionTurns = [...assistant].reverse().findIndex((message) => !questionOnly(message.content))
+  const questionTurns = assistant.filter((message) => hasQuestion(message.content)).length
+  const questionOnlyTurns = assistant.filter((message) => isQuestionOnly(message.content)).length
+  const consecutiveQuestionTurns = [...assistant].reverse().findIndex((message) => !hasQuestion(message.content))
   const streak = consecutiveQuestionTurns === -1 ? assistant.length : consecutiveQuestionTurns
+  const userTurns = recent.map((message, index) => ({ message, previous: recent[index - 1] }))
+    .filter((item) => item.message.role === 'user')
+  const answerTurns = userTurns.filter((item) => item.previous?.role === 'assistant' && hasQuestion(item.previous.content)).length
   const agreementPattern = /^(yes|yeah|right|exactly|totally|确实|是的|对[，,。!！]|没错|そうですね|맞아요|sí|claro|oui|genau|certo|sim)\b/iu
+  const repeatedOpener = recentOpeners.some((value, index) => recentOpeners
+    .slice(index + 1)
+    .some((other) => value.length >= 8 && other.length >= 8 && openerSimilarity(value, other) >= 0.72))
   return {
+    assistantTurns: assistant.length,
+    questionTurns,
+    questionOnlyTurns,
+    questionTurnRate: assistant.length ? questionTurns / assistant.length : 0,
     consecutiveQuestionTurns: streak,
+    userAnswerBurden: userTurns.length ? answerTurns / userTurns.length : 0,
     recentOpeners,
     recentOnlyAgreement: Boolean(assistant.length >= 2 && assistant.slice(-2).every((message) => agreementPattern.test(message.content.trim()))),
+    repeatedOpener,
   }
 }
 
@@ -76,6 +92,9 @@ export function emptyConversationState(setup: ConversationSetup | null = null): 
     openLoops: [],
     sceneFacts: [],
     lastCompactedMessageId: '',
+    recentMoves: [],
+    topicMomentum: [],
+    recentMemoryIds: [],
   }
 }
 
@@ -83,6 +102,8 @@ export function normalizeConversationState(value: unknown, setup: ConversationSe
   const source = record(value)
   const openLoops = Array.isArray(source.openLoops) ? source.openLoops : []
   const sceneFacts = Array.isArray(source.sceneFacts) ? source.sceneFacts : []
+  const recentMoves = Array.isArray(source.recentMoves) ? source.recentMoves : []
+  const topicMomentum = Array.isArray(source.topicMomentum) ? source.topicMomentum : []
   return {
     currentTopic: text(source.currentTopic, setup?.topicSeed || ''),
     topicHistory: Array.isArray(source.topicHistory) ? source.topicHistory.map((item) => text(item)).filter(Boolean).slice(-8) : [],
@@ -106,6 +127,33 @@ export function normalizeConversationState(value: unknown, setup: ConversationSe
       }
     }).filter((item) => item.id && item.value).slice(-20),
     lastCompactedMessageId: text(source.lastCompactedMessageId),
+    recentMoves: recentMoves.map((item) => {
+      const move = record(item)
+      const moveType = text(move.move)
+      return {
+        assistantMessageId: text(move.assistantMessageId),
+        move: (['answer', 'react', 'observe', 'associate', 'callback', 'share', 'clarify'].includes(moveType) ? moveType : 'react') as ConversationState['recentMoves'][number]['move'],
+        topic: text(move.topic),
+        branch: text(move.branch),
+        askedQuestion: Boolean(move.askedQuestion),
+        memoryIds: stringList(move.memoryIds, 8),
+        createdAt: text(move.createdAt),
+      }
+    }).filter((item) => item.assistantMessageId).slice(-8),
+    topicMomentum: topicMomentum.map((item) => {
+      const momentum = record(item)
+      const status = text(momentum.status)
+      return {
+        topic: text(momentum.topic),
+        branch: text(momentum.branch),
+        score: Math.max(-3, Math.min(3, Number(momentum.score) || 0)),
+        status: (['active', 'dormant', 'closed'].includes(status) ? status : 'dormant') as TopicMomentum['status'],
+        continuedCount: Math.max(0, Number(momentum.continuedCount) || 0),
+        switchedCount: Math.max(0, Number(momentum.switchedCount) || 0),
+        lastTouchedAt: text(momentum.lastTouchedAt),
+      }
+    }).filter((item) => item.topic || item.branch).slice(-12),
+    recentMemoryIds: stringList(source.recentMemoryIds, 16),
   }
 }
 
@@ -138,18 +186,27 @@ export function selectRelevantEpisodes(
   latestUserMessage: string,
   currentTopic: string,
   limit = 4,
+  retrievalContext = '',
 ) {
   if (!episodes.length) return []
-  const query = new Set(searchTerms(latestUserMessage + ' ' + currentTopic))
+  const query = new Set(searchTerms(latestUserMessage + ' ' + currentTopic + ' ' + retrievalContext))
   const ranked = episodes.map((episode, index) => {
-    const body = [episode.thread, episode.summary, episode.keywords.join(' '), episode.facts.map((fact) => fact.value).join(' ')].join(' ')
+    const body = [
+      episode.thread,
+      episode.summary,
+      episode.keywords.join(' '),
+      episode.facts.map((fact) => fact.value).join(' '),
+      episode.topicArcs.map((arc) => arc.topic).join(' '),
+      episode.interactionSignals.map((signal) => signal.value).join(' '),
+    ].join(' ')
     const match = overlapScore(query, body)
     const topicMatch = currentTopic && episode.thread.toLocaleLowerCase().includes(currentTopic.toLocaleLowerCase()) ? 2 : 0
     const recency = index >= episodes.length - 2 ? 0.75 : 0
-    return { episode, score: match * 4 + topicMatch + recency }
+    const matched = match > 0 || topicMatch > 0
+    return { episode, score: matched ? match * 4 + topicMatch + recency : 0 }
   }).sort((a, b) => b.score - a.score)
   const matched = ranked.filter((item) => item.score > 0).slice(0, limit).map((item) => item.episode)
-  return matched.length ? matched : [episodes.at(-1)!]
+  return matched
 }
 
 export function selectRelevantMemories(
@@ -160,11 +217,16 @@ export function selectRelevantMemories(
   semanticKeys: string[] = [],
   relevantTopics: string[] = [],
   replyType = 'other',
+  recentMemoryIds: string[] = [],
+  retrievalContext = '',
 ) {
-  const query = new Set(searchTerms(latestUserMessage + ' ' + currentTopic))
+  const query = new Set(searchTerms(latestUserMessage + ' ' + currentTopic + ' ' + retrievalContext))
   const selectedKeys = new Set(semanticKeys.map((key) => text(key)))
   const selectedTopics = new Set(relevantTopics.map((topic) => text(topic).toLocaleLowerCase()).filter(Boolean))
-  const core = memories.filter((memory) => text(memory.tier) === 'core')
+  const recentlyUsed = new Set(recentMemoryIds.map((id) => text(id)).filter(Boolean))
+  const alwaysCore = memories.filter((memory) => text(memory.tier) === 'core' && (
+    Boolean(memory.pinned) || ['constraint', 'learning'].includes(text(memory.memoryType || memory.memory_type))
+  ))
     .sort((left, right) => {
       const pinned = Number(right.pinned || 0) - Number(left.pinned || 0)
       if (pinned) return pinned
@@ -172,10 +234,11 @@ export function selectRelevantMemories(
       if (importance) return importance
       return text(right.updatedAt).localeCompare(text(left.updatedAt))
     })
-    .slice(0, 15)
-  const coreIds = new Set(core.map((memory) => text(memory.id) || `${text(memory.category)}:${text(memory.key)}`))
+    .slice(0, 4)
+  const coreIds = new Set(alwaysCore.map((memory) => text(memory.id) || `${text(memory.category)}:${text(memory.key)}`))
   const routed = memories.map((memory, index) => {
-    if (text(memory.tier) === 'core') return { memory, score: 0 }
+    const memoryIdentity = text(memory.id) || `${text(memory.category)}:${text(memory.key)}`
+    if (coreIds.has(memoryIdentity)) return { memory, score: 0 }
     const category = text(memory.category)
     const key = text(memory.key)
     const memoryType = text(memory.memoryType || memory.memory_type)
@@ -187,14 +250,16 @@ export function selectRelevantMemories(
     const matched = relevance > 0 || semanticMatch > 0 || topicMatch > 0
     const learningBoost = matched && (replyType === 'learning' && (memoryType === 'learning' || category === 'learning')) ? 3 : 0
     const decisionBoost = matched && ['recommendation', 'planning'].includes(replyType) && ['preference', 'constraint'].includes(memoryType) ? 2 : 0
+    const coreBoost = matched && text(memory.tier) === 'core' ? 4 : 0
     const importanceBoost = matched ? Math.max(0, Math.min(1, Number(memory.importance) || 0.5)) : 0
     const recency = matched ? Math.max(0, 1 - index * 0.08) : 0
-    return { memory, score: semanticMatch + topicMatch + relevance + learningBoost + decisionBoost + importanceBoost + recency }
+    const cooldown = matched && recentlyUsed.has(text(memory.id)) && !semanticMatch && memoryType !== 'constraint' ? 6 : 0
+    return { memory, score: semanticMatch + topicMatch + relevance + learningBoost + decisionBoost + coreBoost + importanceBoost + recency - cooldown }
   }).filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
+    .slice(0, Math.min(limit, Math.max(0, 8 - alwaysCore.length)))
     .map((item) => item.memory)
-  return [...core, ...routed.filter((memory) => !coreIds.has(text(memory.id) || `${text(memory.category)}:${text(memory.key)}`))]
+  return [...alwaysCore, ...routed.filter((memory) => !coreIds.has(text(memory.id) || `${text(memory.category)}:${text(memory.key)}`))]
 }
 
 export function selectRecentHistory(
@@ -223,8 +288,14 @@ export function mergeConversationState(input: {
   userMessage: StoredConversationMessage
   assistantMessageId: string
   assistantCreatedAt: string
+  dialogue?: {
+    plan: DialoguePlan
+    policy: DialoguePolicy
+    roleReply: string
+    memoryIds: string[]
+  }
 }) {
-  const { previous, patch, userMessage, assistantMessageId, assistantCreatedAt } = input
+  const { previous, patch, userMessage, assistantMessageId, assistantCreatedAt, dialogue } = input
   const topic = text(patch.currentTopic, previous.currentTopic)
   const topicHistory = topic && topic !== previous.currentTopic
     ? [...previous.topicHistory, previous.currentTopic].filter(Boolean).slice(-8)
@@ -255,6 +326,65 @@ export function mergeConversationState(input: {
     const quote = text(fact.quote)
     return Boolean(text(fact.key) && text(fact.value) && quote && userMessage.content.includes(quote))
   }).slice(0, 3)
+
+  const recentMoves = [...previous.recentMoves]
+  const topicMomentum = previous.topicMomentum.map((item) => ({ ...item }))
+  const previousMove = recentMoves.at(-1)
+  if (dialogue && previousMove?.branch) {
+    const existing = topicMomentum.find((item) => item.branch === previousMove.branch)
+    if (existing) {
+      const outcome = dialogue.plan.previousMoveOutcome
+      if (outcome === 'continued') {
+        existing.score = Math.min(3, existing.score + 1)
+        existing.status = 'active'
+        existing.continuedCount += 1
+      } else if (outcome === 'switched') {
+        existing.score = Math.max(-3, existing.score - 1)
+        existing.status = 'dormant'
+        existing.switchedCount += 1
+      } else if (outcome === 'rejected' || outcome === 'corrected') {
+        existing.score = Math.max(-3, existing.score - 2)
+        existing.status = 'closed'
+      }
+      if (outcome !== 'none' && outcome !== 'unclear') existing.lastTouchedAt = assistantCreatedAt
+    }
+  }
+
+  if (dialogue) {
+    const activeBranch = dialogue.policy.allowedBranch
+    if (activeBranch) {
+      const existing = topicMomentum.find((item) => item.branch === activeBranch)
+      if (existing) {
+        existing.topic = dialogue.plan.topic || existing.topic
+        existing.score = Math.max(1, existing.score)
+        if (existing.status !== 'closed' || dialogue.plan.reopenBranch) existing.status = 'active'
+        existing.lastTouchedAt = assistantCreatedAt
+      } else {
+        topicMomentum.push({
+          topic: dialogue.plan.topic,
+          branch: activeBranch,
+          score: 1,
+          status: 'active',
+          continuedCount: 0,
+          switchedCount: 0,
+          lastTouchedAt: assistantCreatedAt,
+        })
+      }
+    }
+    recentMoves.push({
+      assistantMessageId,
+      move: dialogue.plan.move,
+      topic: dialogue.plan.topic,
+      branch: activeBranch,
+      askedQuestion: hasQuestion(dialogue.roleReply),
+      memoryIds: dialogue.memoryIds.slice(0, 8),
+      createdAt: assistantCreatedAt,
+    })
+  }
+
+  const recentMemoryIds = dialogue
+    ? [...previous.recentMemoryIds, ...dialogue.memoryIds].filter(Boolean).slice(-16)
+    : previous.recentMemoryIds
   return {
     state: {
       ...previous,
@@ -262,6 +392,11 @@ export function mergeConversationState(input: {
       topicHistory,
       openLoops: openLoops.slice(-8),
       sceneFacts: sceneFacts.slice(-20),
+      recentMoves: recentMoves.slice(-8),
+      topicMomentum: topicMomentum
+        .sort((left, right) => left.lastTouchedAt.localeCompare(right.lastTouchedAt))
+        .slice(-12),
+      recentMemoryIds,
     } satisfies ConversationState,
     userFacts,
   }
@@ -275,5 +410,7 @@ export function extractiveEpisodeFallback(messages: StoredConversationMessage[])
     facts: [] as Array<{ value: string; quote: string; source: 'user' | 'partner' | 'scene'; sourceMessageId: string }>,
     openLoops: [] as string[],
     keywords: searchTerms(messages.map((message) => message.content).join(' ')).slice(0, 12),
+    topicArcs: [] as ConversationEpisode['topicArcs'],
+    interactionSignals: [] as ConversationEpisode['interactionSignals'],
   }
 }

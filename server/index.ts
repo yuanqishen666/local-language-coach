@@ -11,12 +11,13 @@ import { getRemoteStatus, isRemoteRequestAllowed, readRemoteState } from './serv
 import { safeJson } from './utils/json.js'
 import { lookupCacheKey } from './utils/ai-cache-key.js'
 import { translationCacheKey } from './utils/translation-cache.js'
-import { coachTurn, lookupTerm, suggestSetups, summarizeEpisode, translateMessage } from './ai/engine.js'
+import { coachTurn, localizeConversationSetup, localizeInterfaceValues, localizeMemoryValues, lookupTerm, suggestSetups, summarizeEpisode, translateMessage } from './ai/engine.js'
 import { assertModelConfigured, consumeProviderCertification, consumeProviderModelDiscovery, listProviderModels, STRUCTURED_CONTRACT_VERSION, testProvider } from './ai/provider.js'
 import type { AppConfig, ConversationEpisode, ConversationSetup, ProviderCapability, ProviderModelProfile } from './types.js'
 import type { ProviderTestOverrides } from './ai/provider.js'
 import { emptyConversationState, extractiveEpisodeFallback, mergeConversationState, normalizeConversationSetup, normalizeConversationState, type StoredConversationMessage } from './ai/context.js'
 import { supportsProviderLookup } from './lookup/provider-tools.js'
+import { normalizeUiLocale } from '../shared/locales.js'
 
 const config = await getConfig()
 const logLevel = process.env.LLC_LOG_LEVEL || (process.env.NODE_ENV === 'test' ? 'silent' : process.env.NODE_ENV === 'production' ? 'warn' : 'info')
@@ -261,16 +262,90 @@ app.post<{ Params: { id: string }; Body: ProviderTestOverrides }>('/api/provider
 
 app.post<{ Params: { id: string }; Body: ProviderTestOverrides }>('/api/providers/:id/models', async (request) => listProviderModels(request.params.id, request.body || {}))
 
-app.post<{ Body: { domain?: string; place?: string; detail?: string } }>('/api/conversation-setups/suggest', async (request) => ({ setups: await suggestSetups(request.body || {}) }))
+app.post<{ Body: { domain?: string; place?: string; detail?: string; interfaceLocale?: string } }>('/api/conversation-setups/suggest', async (request) => ({ setups: await suggestSetups(request.body || {}) }))
 
 function setupForConversation(conversation: Record<string, any>) {
   return normalizeConversationSetup(safeJson(conversation.setup_json, null))
 }
 
+function feedbackLocalizationSnapshot(meta: Record<string, any>, messageId: string, translations: Map<string, string>) {
+  const translated = (id: string, fallback: unknown) => translations.get(`${messageId}:${id}`) || String(fallback || '')
+  const reconstruction = meta.reconstruction && typeof meta.reconstruction === 'object'
+    ? { ...meta.reconstruction, explanation: translated('reconstruction', meta.reconstruction.explanation) }
+    : null
+  const corrections = (Array.isArray(meta.corrections) ? meta.corrections : []).map((item, index) => ({
+    ...item,
+    explanation: translated(`correction:${index}`, item?.explanation),
+  }))
+  const memoryCandidates = (Array.isArray(meta.memoryCandidates) ? meta.memoryCandidates : []).map((item, index) => ({
+    ...item,
+    value: translated(`memory:${index}`, item?.value),
+    ...(item?.previousValue ? { previousValue: translated(`memory-previous:${index}`, item.previousValue) } : {}),
+  }))
+  return { reconstruction, corrections, memoryCandidates }
+}
+
+function feedbackLocalizationItems(meta: Record<string, any>, messageId: string) {
+  const items: Array<{ id: string; value: string }> = []
+  const add = (id: string, value: unknown) => {
+    if (typeof value === 'string' && value.trim()) items.push({ id: `${messageId}:${id}`, value: value.trim() })
+  }
+  add('reconstruction', meta.reconstruction?.explanation)
+  for (const [index, item] of (Array.isArray(meta.corrections) ? meta.corrections : []).entries()) add(`correction:${index}`, item?.explanation)
+  for (const [index, item] of (Array.isArray(meta.memoryCandidates) ? meta.memoryCandidates : []).entries()) {
+    add(`memory:${index}`, item?.value)
+    add(`memory-previous:${index}`, item?.previousValue)
+  }
+  return items
+}
+
+async function messagesForInterface(conversationId: string, interfaceLocale: string) {
+  const messages: Array<Record<string, any>> = rows<Record<string, any>>('SELECT id, role, content, status, client_message_id AS clientMessageId, meta_json AS metaJson, created_at AS createdAt FROM messages WHERE conversation_id = ? ORDER BY created_at', conversationId)
+    .map((message) => ({ ...message, meta: safeJson<Record<string, any>>(message.metaJson, {}) }) as Record<string, any>)
+  const missing: Array<{ message: Record<string, any>; items: Array<{ id: string; value: string }> }> = []
+
+  for (const message of messages) {
+    if (message.role !== 'assistant' || message.meta.interfaceLocale === interfaceLocale) continue
+    const cached = message.meta.feedbackLocalizations?.[interfaceLocale]
+    if (cached && typeof cached === 'object') {
+      message.meta = { ...message.meta, ...cached, interfaceLocale }
+      continue
+    }
+    missing.push({ message, items: feedbackLocalizationItems(message.meta, message.id) })
+  }
+  if (!missing.length) return messages
+
+  try {
+    const localized = await localizeInterfaceValues(missing.flatMap((entry) => entry.items), interfaceLocale)
+    const translations = new Map(localized.map((item) => [item.id, item.value]))
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const entry of missing) {
+        const snapshot = feedbackLocalizationSnapshot(entry.message.meta, entry.message.id, translations)
+        entry.message.meta.feedbackLocalizations = {
+          ...(entry.message.meta.feedbackLocalizations || {}),
+          [interfaceLocale]: snapshot,
+        }
+        db.prepare('UPDATE messages SET meta_json = ? WHERE id = ?').run(JSON.stringify(entry.message.meta), entry.message.id)
+        entry.message.meta = { ...entry.message.meta, ...snapshot, interfaceLocale }
+      }
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  } catch {
+    // The frontend treats mismatched provenance as unavailable, so a failed
+    // localization never exposes the earlier interface language.
+  }
+  return messages
+}
+
 function readEpisodes(conversationId: string): ConversationEpisode[] {
   return rows<Record<string, any>>(`SELECT id, conversation_id AS conversationId, start_message_id AS startMessageId,
     end_message_id AS endMessageId, thread, summary, facts_json AS factsJson, open_loops_json AS openLoopsJson,
-    keywords_json AS keywordsJson, created_at AS createdAt, updated_at AS updatedAt
+    keywords_json AS keywordsJson, topic_arcs_json AS topicArcsJson,
+    interaction_signals_json AS interactionSignalsJson, created_at AS createdAt, updated_at AS updatedAt
     FROM conversation_episodes WHERE conversation_id = ? ORDER BY created_at`, conversationId).map((episode) => ({
     id: episode.id,
     conversationId: episode.conversationId,
@@ -281,12 +356,14 @@ function readEpisodes(conversationId: string): ConversationEpisode[] {
     facts: safeJson(episode.factsJson, []),
     openLoops: safeJson(episode.openLoopsJson, []),
     keywords: safeJson(episode.keywordsJson, []),
+    topicArcs: safeJson(episode.topicArcsJson, []),
+    interactionSignals: safeJson(episode.interactionSignalsJson, []),
     createdAt: episode.createdAt,
     updatedAt: episode.updatedAt,
   }))
 }
 
-async function compactOlderMessages(conversationId: string, messages: StoredConversationMessage[], state: ReturnType<typeof normalizeConversationState>) {
+async function compactOlderMessages(conversationId: string, messages: StoredConversationMessage[], state: ReturnType<typeof normalizeConversationState>, interfaceLocale?: string) {
   const start = state.lastCompactedMessageId
     ? Math.max(0, messages.findIndex((message) => message.id === state.lastCompactedMessageId) + 1)
     : 0
@@ -296,15 +373,16 @@ async function compactOlderMessages(conversationId: string, messages: StoredConv
   const segment = messages.slice(start, Math.min(start + 12, compactableEnd))
   let summary
   try {
-    summary = await summarizeEpisode(segment)
+    summary = await summarizeEpisode(segment, interfaceLocale)
   } catch {
     summary = extractiveEpisodeFallback(segment)
   }
   const id = nanoid()
   const now = new Date().toISOString()
   db.prepare(`INSERT INTO conversation_episodes
-    (id, conversation_id, start_message_id, end_message_id, thread, summary, facts_json, open_loops_json, keywords_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    (id, conversation_id, start_message_id, end_message_id, thread, summary, facts_json, open_loops_json, keywords_json,
+      topic_arcs_json, interaction_signals_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     id,
     conversationId,
     segment[0].id,
@@ -314,6 +392,8 @@ async function compactOlderMessages(conversationId: string, messages: StoredConv
     JSON.stringify(summary.facts),
     JSON.stringify(summary.openLoops),
     JSON.stringify(summary.keywords),
+    JSON.stringify(summary.topicArcs),
+    JSON.stringify(summary.interactionSignals),
     now,
     now,
   )
@@ -322,7 +402,10 @@ async function compactOlderMessages(conversationId: string, messages: StoredConv
   return { state: nextState, episodes: readEpisodes(conversationId) }
 }
 
-app.get('/api/conversations', async () => rows(`SELECT c.id, c.mode, c.title, c.status,
+app.get<{ Querystring: { interfaceLocale?: string } }>('/api/conversations', async (request) => {
+  const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(request.query.interfaceLocale, current.ui.locale)
+  return rows<Record<string, any>>(`SELECT c.id, c.mode, c.title, c.status,
   CASE WHEN c.setup_json IS NULL OR TRIM(c.setup_json) = '' THEN 'direct' ELSE 'scene' END AS kind,
   COALESCE((
     SELECT SUBSTR(m.content, 1, 240)
@@ -331,20 +414,32 @@ app.get('/api/conversations', async () => rows(`SELECT c.id, c.mode, c.title, c.
     ORDER BY m.created_at, m.rowid
     LIMIT 1
   ), '') AS firstMessage,
+  c.interface_locale AS interfaceLocale, c.localized_setups_json AS localizedSetupsJson,
   c.created_at AS createdAt, c.updated_at AS updatedAt
   FROM conversations c
-  ORDER BY c.updated_at DESC`))
+  ORDER BY c.updated_at DESC`).map((item) => {
+    if (item.kind !== 'scene' || item.interfaceLocale === interfaceLocale) {
+      const { localizedSetupsJson: _localized, ...publicItem } = item
+      return publicItem
+    }
+    const localized = normalizeConversationSetup(safeJson<Record<string, unknown>>(item.localizedSetupsJson, {})[interfaceLocale])
+    const { localizedSetupsJson: _localized, ...publicItem } = item
+    return localized ? { ...publicItem, title: localized.title, interfaceLocale } : publicItem
+  })
+})
 
-app.post<{ Body: { title?: string; setup?: ConversationSetup | null } }>('/api/conversations', async (request) => {
+app.post<{ Body: { title?: string; setup?: ConversationSetup | null; interfaceLocale?: string } }>('/api/conversations', async (request) => {
   await assertModelConfigured()
   const id = nanoid()
   const now = new Date().toISOString()
   const setup = normalizeConversationSetup(request.body.setup)
+  const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
   const title = request.body.title?.trim() || setup?.title || 'Open conversation'
   const state = emptyConversationState(setup)
   db.prepare(`INSERT INTO conversations
-    (id, mode, title, setup_json, state_json, status, created_at, updated_at)
-    VALUES (?, 'conversation', ?, ?, ?, 'active', ?, ?)`).run(id, title, setup ? JSON.stringify(setup) : null, JSON.stringify(state), now, now)
+    (id, mode, title, setup_json, interface_locale, state_json, status, created_at, updated_at)
+    VALUES (?, 'conversation', ?, ?, ?, ?, 'active', ?, ?)`).run(id, title, setup ? JSON.stringify(setup) : null, interfaceLocale, JSON.stringify(state), now, now)
   if (setup?.openingLine) {
     db.prepare('INSERT INTO messages (id, conversation_id, role, content, meta_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(nanoid(), id, 'assistant', setup.openingLine, JSON.stringify({ opening: true }), 'complete', now)
@@ -352,19 +447,41 @@ app.post<{ Body: { title?: string; setup?: ConversationSetup | null } }>('/api/c
   return { id }
 })
 
-app.get<{ Params: { id: string } }>('/api/conversations/:id', async (request) => {
+app.get<{ Params: { id: string }; Querystring: { interfaceLocale?: string } }>('/api/conversations/:id', async (request) => {
   const conversation = row<Record<string, any>>('SELECT * FROM conversations WHERE id = ?', request.params.id)
   if (!conversation) throw Object.assign(new Error('Conversation not found'), { statusCode: 404 })
-  const setup = setupForConversation(conversation)
+  const current = await getConfig()
+  const requestedLocale = normalizeUiLocale(request.query.interfaceLocale, current.ui.locale)
+  let responseLocale = conversation.interface_locale
+  let setup = setupForConversation(conversation)
+  if (setup && responseLocale !== requestedLocale) {
+    const localizations = safeJson<Record<string, unknown>>(conversation.localized_setups_json, {})
+    let localized = normalizeConversationSetup(localizations[requestedLocale])
+    if (!localized) {
+      try {
+        localized = await localizeConversationSetup(setup, requestedLocale)
+        localizations[requestedLocale] = localized
+        db.prepare('UPDATE conversations SET localized_setups_json = ? WHERE id = ?')
+          .run(JSON.stringify(localizations), conversation.id)
+      } catch {
+        localized = null
+      }
+    }
+    if (localized) {
+      setup = localized
+      responseLocale = requestedLocale
+    }
+  }
+  const messages = await messagesForInterface(conversation.id, requestedLocale)
   return {
     id: conversation.id,
     mode: 'conversation',
-    title: conversation.title,
+    title: setup?.title || conversation.title,
     status: conversation.status === 'archived' ? 'archived' : 'active',
+    interfaceLocale: responseLocale,
     setup,
     createdAt: conversation.created_at,
-    messages: rows<Record<string, any>>('SELECT id, role, content, status, client_message_id AS clientMessageId, meta_json AS metaJson, created_at AS createdAt FROM messages WHERE conversation_id = ? ORDER BY created_at', request.params.id)
-      .map((message) => ({ ...message, meta: safeJson(message.metaJson, {}) })),
+    messages,
   }
 })
 
@@ -393,11 +510,13 @@ app.patch<{ Params: { id: string }; Body: { archived: boolean } }>('/api/convers
   return { ok: true, status: request.body.archived ? 'archived' : 'active' }
 })
 
-app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: string } }>('/api/conversations/:id/messages', async (request) => {
+app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: string; interfaceLocale?: string } }>('/api/conversations/:id/messages', async (request) => {
   const content = request.body.content?.trim()
   if (!content) throw Object.assign(new Error('Message cannot be empty'), { statusCode: 400 })
   const conversation = row<Record<string, any>>('SELECT * FROM conversations WHERE id = ?', request.params.id)
   if (!conversation) throw Object.assign(new Error('Conversation not found'), { statusCode: 404 })
+  const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
   const clientMessageId = request.body.clientMessageId?.trim() || nanoid()
   const inFlightKey = request.params.id + ':' + clientMessageId
   const running = inFlightTurns.get(inFlightKey)
@@ -425,14 +544,20 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
     const messageRows = rows<StoredConversationMessage>("SELECT id, role, content, created_at AS createdAt FROM messages WHERE conversation_id = ? AND (status = 'complete' OR id = ?) ORDER BY created_at", request.params.id, userId)
     const setup = setupForConversation(conversation)
     const initialState = normalizeConversationState(safeJson(conversation.state_json, null), setup)
-    const compacted = await compactOlderMessages(request.params.id, messageRows, initialState)
-    const memories = rows<Record<string, unknown>>(`SELECT id, category, key, value, tier,
+    const compacted = await compactOlderMessages(request.params.id, messageRows, initialState, interfaceLocale)
+    const storedMemories = rows<Record<string, any>>(`SELECT id, category, key, value, tier,
+      interface_locale AS interfaceLocale, localized_values_json AS localizedValuesJson,
       memory_type AS memoryType, topic, importance, pinned, confidence, sensitive, status,
       source_conversation_id AS sourceConversationId, source_message_id AS sourceMessageId,
-      last_used_at AS lastUsedAt, use_count AS useCount, created_at AS createdAt, updated_at AS updatedAt
+      last_used_at AS lastUsedAt, use_count AS useCount, last_mentioned_at AS lastMentionedAt,
+      mention_count AS mentionCount, created_at AS createdAt, updated_at AS updatedAt
       FROM memories
-      WHERE status = ? AND sensitive = 0 AND (valid_to IS NULL OR valid_to > ?)
+      WHERE status = ? AND (valid_to IS NULL OR valid_to > ?)
       ORDER BY CASE WHEN tier = 'core' THEN 0 ELSE 1 END, pinned DESC, importance DESC, updated_at DESC`, 'confirmed', now)
+    await ensureMemoryLocalizations(storedMemories, interfaceLocale).catch(() => undefined)
+    const memories = storedMemories
+      .map((memory) => memoryForInterface(memory, interfaceLocale))
+      .filter((memory): memory is Record<string, any> => Boolean(memory))
     let turn
     try {
       turn = await coachTurn({
@@ -441,6 +566,7 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
         memories,
         episodes: compacted.episodes,
         state: compacted.state,
+        interfaceLocale,
       })
     } catch (error) {
       db.prepare('UPDATE messages SET status = ? WHERE id = ?').run('failed', userId)
@@ -455,6 +581,12 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
       userMessage: { id: userId, role: 'user', content, createdAt: now },
       assistantMessageId: assistantId,
       assistantCreatedAt: replyAt,
+      dialogue: {
+        plan: turn.context.dialoguePlan,
+        policy: turn.context.dialoguePolicy,
+        roleReply: result.roleReply,
+        memoryIds: turn.context.memoryIds,
+      },
     })
     result.memoryCandidates = merged.userFacts.map((fact) => {
       const existingMemory = memories.find((memory) => memory.key === fact.key)
@@ -462,7 +594,7 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
       const category = existingMemory?.category === 'learning' || existingMemory?.category === 'scene' || existingMemory?.category === 'personal'
         ? existingMemory.category
         : memoryType === 'learning' ? 'learning' : memoryType === 'episodic' ? 'scene' : 'personal'
-      const suggestedTier = fact.sensitive ? 'long_term' : fact.suggestedTier || 'long_term'
+      const suggestedTier = fact.suggestedTier || 'long_term'
       return {
         category: category as 'personal' | 'learning' | 'scene',
         key: fact.key,
@@ -486,6 +618,11 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
       for (const memoryId of new Set(turn.context.memoryIds)) {
         db.prepare('UPDATE memories SET use_count = use_count + 1, last_used_at = ? WHERE id = ?').run(replyAt, memoryId)
       }
+      const mentionedMemory = memories.find((memory) => memory.key === turn.context.dialoguePlan.callbackMemoryKey)
+      if (mentionedMemory && turn.context.memoryIds.includes(String(mentionedMemory.id))) {
+        db.prepare('UPDATE memories SET mention_count = mention_count + 1, last_mentioned_at = ? WHERE id = ?')
+          .run(replyAt, mentionedMemory.id)
+      }
       db.exec('COMMIT')
     } catch (error) {
       db.exec('ROLLBACK')
@@ -503,33 +640,34 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
   finally { if (inFlightTurns.get(inFlightKey) === task) inFlightTurns.delete(inFlightKey) }
 })
 
-app.post<{ Params: { id: string; messageId: string } }>('/api/conversations/:id/messages/:messageId/translation', async (request) => {
+app.post<{ Params: { id: string; messageId: string }; Body: { interfaceLocale?: string } }>('/api/conversations/:id/messages/:messageId/translation', async (request) => {
   const conversation = row<Record<string, any>>('SELECT * FROM conversations WHERE id = ?', request.params.id)
   if (!conversation) throw Object.assign(new Error('Conversation not found'), { statusCode: 404 })
   const message = row<Record<string, any>>('SELECT * FROM messages WHERE id = ? AND conversation_id = ? AND role = ?', request.params.messageId, request.params.id, 'assistant')
   if (!message) throw Object.assign(new Error('Assistant message not found'), { statusCode: 404 })
   const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(request.body?.interfaceLocale, current.ui.locale)
   const meta = safeJson<Record<string, any>>(message.meta_json, {})
   const translations: Record<string, string> = meta.roleReplyTranslations && typeof meta.roleReplyTranslations === 'object'
     ? meta.roleReplyTranslations
     : {}
-  if (typeof translations[current.ui.locale] === 'string' && translations[current.ui.locale]) {
-    return { translation: translations[current.ui.locale], cached: true, cacheSource: 'message' }
+  if (typeof translations[interfaceLocale] === 'string' && translations[interfaceLocale]) {
+    return { translation: translations[interfaceLocale], interfaceLocale, cached: true, cacheSource: 'message' }
   }
   const setup = setupForConversation(conversation)
   const cacheKey = translationCacheKey({
     content: message.content,
     targetLanguageCode: current.learning.targetLanguageCode,
-    interfaceLocale: current.ui.locale,
+    interfaceLocale,
     setup,
   })
   const cached = row<{ translation: string }>('SELECT translation FROM translation_cache WHERE cache_key = ?', cacheKey)
   if (cached) {
     const now = new Date().toISOString()
     db.prepare('UPDATE translation_cache SET hit_count = hit_count + 1, last_accessed = ? WHERE cache_key = ?').run(now, cacheKey)
-    meta.roleReplyTranslations = { ...translations, [current.ui.locale]: cached.translation }
+    meta.roleReplyTranslations = { ...translations, [interfaceLocale]: cached.translation }
     db.prepare('UPDATE messages SET meta_json = ? WHERE id = ?').run(JSON.stringify(meta), message.id)
-    return { translation: cached.translation, cached: true, cacheSource: 'shared' }
+    return { translation: cached.translation, interfaceLocale, cached: true, cacheSource: 'shared' }
   }
   const running = inFlightTranslations.get(cacheKey)
   let translation: string
@@ -537,7 +675,7 @@ app.post<{ Params: { id: string; messageId: string } }>('/api/conversations/:id/
     translation = await running
   } else {
     const task = (async () => {
-      const generated = await translateMessage(message.content, setup)
+      const generated = await translateMessage(message.content, setup, interfaceLocale)
       const now = new Date().toISOString()
       db.prepare(`INSERT INTO translation_cache (cache_key, translation, created_at, last_accessed)
         VALUES (?, ?, ?, ?)
@@ -551,24 +689,25 @@ app.post<{ Params: { id: string; messageId: string } }>('/api/conversations/:id/
     try { translation = await task }
     finally { if (inFlightTranslations.get(cacheKey) === task) inFlightTranslations.delete(cacheKey) }
   }
-  meta.roleReplyTranslations = { ...translations, [current.ui.locale]: translation }
+  meta.roleReplyTranslations = { ...translations, [interfaceLocale]: translation }
   db.prepare('UPDATE messages SET meta_json = ? WHERE id = ?').run(JSON.stringify(meta), message.id)
-  return { translation, cached: Boolean(running), cacheSource: running ? 'inflight' : 'generated' }
+  return { translation, interfaceLocale, cached: Boolean(running), cacheSource: running ? 'inflight' : 'generated' }
 })
 
-app.post<{ Body: { term: string; sentence: string; previous?: string; setup?: unknown } }>('/api/lookup', async (request) => {
+app.post<{ Body: { term: string; sentence: string; previous?: string; setup?: unknown; interfaceLocale?: string } }>('/api/lookup', async (request) => {
   const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
   const cacheKey = lookupCacheKey({
     ...request.body,
     targetLanguage: current.learning.targetLanguage,
     targetLanguageCode: current.learning.targetLanguageCode,
-    interfaceLocale: current.ui.locale,
+    interfaceLocale,
   })
   const cached = readAiResponseCache<Awaited<ReturnType<typeof lookupTerm>>>('lookup', cacheKey)
   if (cached) return { lookup: cached, cached: true, cacheSource: 'persistent' }
   const running = inFlightLookups.get(cacheKey)
   if (running) return { lookup: await running, cached: true, cacheSource: 'inflight' }
-  const task = lookupTerm(request.body)
+  const task = lookupTerm({ ...request.body, interfaceLocale })
   inFlightLookups.set(cacheKey, task)
   try {
     const lookup = await task
@@ -579,17 +718,44 @@ app.post<{ Body: { term: string; sentence: string; previous?: string; setup?: un
   }
 })
 
-app.get('/api/words', async () => rows<Record<string, any>>('SELECT * FROM word_entries ORDER BY updated_at DESC').map((item) => ({ ...item, details: safeJson(item.details_json, {}) })))
+function wordPayload(item: Record<string, any>) {
+  return { ...item, interfaceLocale: item.interface_locale, details: safeJson(item.details_json, {}) }
+}
 
-app.post<{ Body: { term: string; lemma?: string; meaning: string; language: string; details: unknown; sourceSentence?: string; conversationId?: string } }>('/api/words', async (request) => {
+app.get('/api/words', async () => rows<Record<string, any>>('SELECT * FROM word_entries ORDER BY updated_at DESC').map(wordPayload))
+
+app.post<{ Body: { term: string; lemma?: string; meaning: string; language: string; interfaceLocale?: string; details: unknown; sourceSentence?: string; conversationId?: string } }>('/api/words', async (request) => {
   const id = nanoid(); const now = new Date().toISOString()
-  db.prepare('INSERT INTO word_entries (id, term, lemma, language, meaning, details_json, source_sentence, conversation_id, due_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, request.body.term, request.body.lemma || request.body.term, request.body.language, request.body.meaning, JSON.stringify(request.body.details), request.body.sourceSentence || null, request.body.conversationId || null, now, now, now)
+  const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
+  db.prepare('INSERT INTO word_entries (id, term, lemma, language, interface_locale, meaning, details_json, source_sentence, conversation_id, due_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, request.body.term, request.body.lemma || request.body.term, request.body.language, interfaceLocale, request.body.meaning, JSON.stringify(request.body.details), request.body.sourceSentence || null, request.body.conversationId || null, now, now, now)
   return { id }
+})
+
+app.post<{ Params: { id: string }; Body: { interfaceLocale?: string } }>('/api/words/:id/localize', async (request) => {
+  const word = row<Record<string, any>>('SELECT * FROM word_entries WHERE id = ?', request.params.id)
+  if (!word) throw Object.assign(new Error('Word not found'), { statusCode: 404 })
+  const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
+  if (word.interface_locale === interfaceLocale) return wordPayload(word)
+  const conversation = word.conversation_id
+    ? row<Record<string, any>>('SELECT * FROM conversations WHERE id = ?', word.conversation_id)
+    : undefined
+  const lookup = await lookupTerm({
+    term: word.term,
+    sentence: word.source_sentence || word.term,
+    setup: conversation ? setupForConversation(conversation) : undefined,
+    interfaceLocale,
+  })
+  const now = new Date().toISOString()
+  db.prepare('UPDATE word_entries SET lemma = ?, meaning = ?, details_json = ?, interface_locale = ?, updated_at = ? WHERE id = ?')
+    .run(lookup.lemma || word.lemma, lookup.contextMeaning, JSON.stringify(lookup), interfaceLocale, now, word.id)
+  return wordPayload({ ...word, lemma: lookup.lemma || word.lemma, meaning: lookup.contextMeaning, details_json: JSON.stringify(lookup), interface_locale: interfaceLocale, updated_at: now })
 })
 
 app.delete<{ Params: { id: string } }>('/api/words/:id', async (request) => { db.prepare('DELETE FROM word_entries WHERE id = ?').run(request.params.id); return { ok: true } })
 
-app.get('/api/reviews/due', async () => rows<Record<string, any>>('SELECT * FROM word_entries WHERE due_at <= ? ORDER BY due_at LIMIT 30', new Date().toISOString()).map((item) => ({ ...item, details: safeJson(item.details_json, {}) })))
+app.get('/api/reviews/due', async () => rows<Record<string, any>>('SELECT * FROM word_entries WHERE due_at <= ? ORDER BY due_at LIMIT 30', new Date().toISOString()).map(wordPayload))
 
 app.post<{ Params: { id: string }; Body: { rating: 1 | 2 | 3 | 4 } }>('/api/reviews/:id', async (request) => {
   const word = row<Record<string, any>>('SELECT * FROM word_entries WHERE id = ?', request.params.id)
@@ -628,11 +794,41 @@ function addMemoryRevision(memoryId: string, previousValue: string | null, nextV
   )
 }
 
+function memoryForInterface(memory: Record<string, any>, interfaceLocale: string) {
+  if (memory.interfaceLocale === interfaceLocale) return memory
+  const localized = safeJson<Record<string, string>>(memory.localizedValuesJson, {})[interfaceLocale]
+  return localized ? { ...memory, value: localized, interfaceLocale } : null
+}
+
+async function ensureMemoryLocalizations(stored: Array<Record<string, any>>, interfaceLocale: string) {
+  const missing = stored.filter((item) => item.status === 'confirmed' && item.interfaceLocale !== interfaceLocale &&
+    !safeJson<Record<string, string>>(item.localizedValuesJson, {})[interfaceLocale])
+  if (!missing.length) return
+  const localized = await localizeMemoryValues(missing.map((item) => ({ id: item.id, value: item.value })), interfaceLocale)
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    for (const item of localized) {
+      const source = stored.find((memory) => memory.id === item.id)
+      if (!source) continue
+      const translations = safeJson<Record<string, string>>(source.localizedValuesJson, {})
+      translations[interfaceLocale] = item.value
+      source.localizedValuesJson = JSON.stringify(translations)
+      db.prepare('UPDATE memories SET localized_values_json = ? WHERE id = ?')
+        .run(source.localizedValuesJson, item.id)
+    }
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
 app.get('/api/memories', async () => rows<Record<string, any>>(`SELECT id, category, key, value, tier,
-  memory_type AS memoryType, topic, importance, pinned, confidence, sensitive, status,
+  interface_locale AS interfaceLocale, localized_values_json AS localizedValuesJson, memory_type AS memoryType, topic, importance, pinned, confidence, sensitive, status,
   source_conversation_id AS sourceConversationId, source_message_id AS sourceMessageId,
   supersedes_id AS supersedesId, valid_from AS validFrom, valid_to AS validTo,
-  last_used_at AS lastUsedAt, use_count AS useCount, created_at AS createdAt, updated_at AS updatedAt
+  last_used_at AS lastUsedAt, use_count AS useCount, last_mentioned_at AS lastMentionedAt,
+  mention_count AS mentionCount, created_at AS createdAt, updated_at AS updatedAt
   FROM memories
   ORDER BY CASE WHEN tier = 'core' THEN 0 ELSE 1 END, pinned DESC, importance DESC, updated_at DESC`).map((memory) => ({
     ...memory,
@@ -642,7 +838,7 @@ app.get('/api/memories', async () => rows<Record<string, any>>(`SELECT id, categ
 
 app.post<{ Body: {
   category: string; key: string; value: string; confidence?: number; sensitive?: boolean; status?: string
-  sourceConversationId?: string; sourceMessageId?: string; tier?: 'core' | 'long_term'; memoryType?: string; topic?: string; importance?: number
+  sourceConversationId?: string; sourceMessageId?: string; tier?: 'core' | 'long_term'; memoryType?: string; topic?: string; importance?: number; interfaceLocale?: string
 } }>('/api/memories', async (request) => {
   const body = request.body
   const category = memoryCategories.has(body.category) ? body.category : 'personal'
@@ -652,7 +848,7 @@ app.post<{ Body: {
   const existing = row<Record<string, any>>('SELECT * FROM memories WHERE category = ? AND key = ?', category, key)
   const sensitive = body.sensitive === undefined ? Boolean(existing?.sensitive) : Boolean(body.sensitive)
   const requestedTier = body.tier || existing?.tier || 'long_term'
-  const tier = requestedTier === 'core' && !sensitive ? 'core' : 'long_term'
+  const tier = requestedTier === 'core' ? 'core' : 'long_term'
   if (tier === 'core') assertCoreMemoryAvailable(existing)
   const existingMemoryType = existing?.memory_type
   const memoryType = memoryTypes.has(body.memoryType || '')
@@ -664,23 +860,25 @@ app.post<{ Body: {
   const sourceConversationId = body.sourceConversationId ?? existing?.source_conversation_id ?? null
   const sourceMessageId = body.sourceMessageId ?? existing?.source_message_id ?? null
   const status = body.status || existing?.status || 'confirmed'
+  const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(body.interfaceLocale, current.ui.locale)
   const now = new Date().toISOString()
   const id = existing?.id || nanoid()
   db.exec('BEGIN IMMEDIATE')
   try {
     if (existing) {
       addMemoryRevision(id, existing.value, value, existing.value === value ? 'metadata' : 'update', sourceConversationId, sourceMessageId)
-      db.prepare(`UPDATE memories SET value = ?, tier = ?, memory_type = ?, topic = ?, importance = ?, pinned = ?, confidence = ?, sensitive = ?,
+      db.prepare(`UPDATE memories SET value = ?, interface_locale = ?, localized_values_json = '{}', tier = ?, memory_type = ?, topic = ?, importance = ?, pinned = ?, confidence = ?, sensitive = ?,
         status = ?, source_conversation_id = ?, source_message_id = ?, valid_to = NULL, updated_at = ? WHERE id = ?`).run(
-        value, tier, memoryType, topic, importance, tier === 'core' ? existing.pinned : 0, confidence, sensitive ? 1 : 0,
+        value, interfaceLocale, tier, memoryType, topic, importance, tier === 'core' ? existing.pinned : 0, confidence, sensitive ? 1 : 0,
         status, sourceConversationId, sourceMessageId, now, id,
       )
     } else {
       db.prepare(`INSERT INTO memories
-        (id, category, key, value, tier, memory_type, topic, importance, pinned, confidence, sensitive, status,
+        (id, category, key, value, interface_locale, localized_values_json, tier, memory_type, topic, importance, pinned, confidence, sensitive, status,
           source_conversation_id, source_message_id, valid_from, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        id, category, key, value, tier, memoryType, topic, importance, confidence,
+        VALUES (?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        id, category, key, value, interfaceLocale, tier, memoryType, topic, importance, confidence,
         sensitive ? 1 : 0, status, sourceConversationId, sourceMessageId, now, now, now,
       )
       addMemoryRevision(id, null, value, 'create', sourceConversationId, sourceMessageId)
@@ -693,16 +891,35 @@ app.post<{ Body: {
   return { id, action: existing ? 'update' : 'create' }
 })
 
-app.put<{ Params: { id: string }; Body: { value: string; status?: string } }>('/api/memories/:id', async (request) => {
+app.post<{ Body: { interfaceLocale?: string } }>('/api/memories/localize', async (request) => {
+  const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
+  const stored = rows<Record<string, any>>(`SELECT id, category, key, value, tier,
+    interface_locale AS interfaceLocale, localized_values_json AS localizedValuesJson, memory_type AS memoryType, topic, importance, pinned, confidence, sensitive, status,
+    source_conversation_id AS sourceConversationId, source_message_id AS sourceMessageId,
+    last_used_at AS lastUsedAt, use_count AS useCount, last_mentioned_at AS lastMentionedAt,
+    mention_count AS mentionCount, created_at AS createdAt, updated_at AS updatedAt
+    FROM memories ORDER BY CASE WHEN tier = 'core' THEN 0 ELSE 1 END, pinned DESC, importance DESC, updated_at DESC`)
+  await ensureMemoryLocalizations(stored, interfaceLocale)
+  return stored.map((memory) => {
+    if (memory.interfaceLocale === interfaceLocale) return memory
+    const localized = safeJson<Record<string, string>>(memory.localizedValuesJson, {})[interfaceLocale]
+    return localized ? { ...memory, value: localized, interfaceLocale } : memory
+  })
+})
+
+app.put<{ Params: { id: string }; Body: { value: string; status?: string; interfaceLocale?: string } }>('/api/memories/:id', async (request) => {
   const existing = row<Record<string, any>>('SELECT * FROM memories WHERE id = ?', request.params.id)
   if (!existing) throw Object.assign(new Error('Memory not found'), { statusCode: 404 })
   const value = request.body.value?.trim()
   if (!value) throw Object.assign(new Error('Memory value is required.'), { statusCode: 400 })
+  const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
   const now = new Date().toISOString()
   db.exec('BEGIN IMMEDIATE')
   try {
     addMemoryRevision(existing.id, existing.value, value, 'edit', existing.source_conversation_id, existing.source_message_id)
-    db.prepare('UPDATE memories SET value = ?, status = COALESCE(?, status), updated_at = ? WHERE id = ?').run(value, request.body.status || null, now, request.params.id)
+    db.prepare("UPDATE memories SET value = ?, interface_locale = ?, localized_values_json = '{}', status = COALESCE(?, status), updated_at = ? WHERE id = ?").run(value, interfaceLocale, request.body.status || null, now, request.params.id)
     db.exec('COMMIT')
   } catch (error) {
     db.exec('ROLLBACK')
@@ -715,7 +932,6 @@ app.patch<{ Params: { id: string }; Body: { tier: 'core' | 'long_term' } }>('/ap
   const existing = row<Record<string, any>>('SELECT * FROM memories WHERE id = ?', request.params.id)
   if (!existing) throw Object.assign(new Error('Memory not found'), { statusCode: 404 })
   if (!['core', 'long_term'].includes(request.body.tier)) throw Object.assign(new Error('Invalid memory tier'), { statusCode: 400 })
-  if (request.body.tier === 'core' && existing.sensitive) throw Object.assign(new Error('Sensitive memories cannot be placed in core memory.'), { statusCode: 409, code: 'SENSITIVE_CORE_MEMORY' })
   if (request.body.tier === 'core') assertCoreMemoryAvailable(existing)
   if (existing.tier === request.body.tier) return { ok: true }
   const now = new Date().toISOString()

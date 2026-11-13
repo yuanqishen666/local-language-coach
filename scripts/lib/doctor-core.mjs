@@ -140,7 +140,7 @@ export async function configuredPort() {
 
 async function checkPort(port, mode) {
   const running = await healthAt(port)
-  if (running) return result('port', 'pass', `言习已经在端口 ${port} 运行`, { detail: running.url })
+  if (running) return result('port', 'pass', `语见已经在端口 ${port} 运行`, { detail: running.url })
   if (await portIsAvailable(port)) return result('port', 'pass', `本地端口 ${port} 可用`)
   return result(
     'port',
@@ -183,7 +183,7 @@ export async function runChecks(options = {}) {
     results.push(result('node', 'pass', `Node.js ${process.version}`, { detail: `要求 >=${requiredNode}` }))
   } else {
     results.push(result('node', 'fail', `Node.js 版本太旧：${process.version}`, {
-      detail: `言习需要 Node.js >=${requiredNode}。项目使用 Node 内置 SQLite，不需要单独安装 SQLite。`,
+      detail: `语见需要 Node.js >=${requiredNode}。项目使用 Node 内置 SQLite，不需要单独安装 SQLite。`,
       fix: '从 https://nodejs.org/ 安装当前 LTS 版本，重新打开终端后再运行 npm start。',
       code: 'ENV_NODE_VERSION',
     }))
@@ -219,7 +219,7 @@ export async function runChecks(options = {}) {
   const config = await readJson(configPath)
   if (config.error || (config.exists && !isConfigShape(config.value))) {
     results.push(result('config', 'fail', '本地设置文件无法读取', {
-      detail: `${configPath}\n${config.error || '设置文件不是有效的言习配置结构。'}`,
+      detail: `${configPath}\n${config.error || '设置文件不是有效的语见配置结构。'}`,
       fix: '运行 npm run doctor -- --repair-config。原文件会先被保留为备份。',
       code: 'LOCAL_CONFIG_INVALID',
     }))

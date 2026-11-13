@@ -27,6 +27,7 @@
     "@fontsource-variable/manrope": "^5.2.8",
     "@fontsource-variable/noto-sans-sc": "^5.2.8",
     "fastify": "^5.6.1",
+    "franc-min": "6.2.0",
     "jsonrepair": "^3.15.0",
     "nanoid": "^5.1.6",
     "pinia": "^3.0.3",

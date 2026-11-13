@@ -110,6 +110,7 @@ export interface Conversation {
   mode: 'conversation'
   title: string
   status: 'active' | 'archived'
+  interfaceLocale?: UiLocale
   setup: ConversationSetup | null
   createdAt: string
   messages: Message[]

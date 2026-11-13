@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, ApiError } from '../api'
 import AppIcon from '../components/AppIcon.vue'
@@ -16,9 +16,32 @@ const memoryDirty = computed(() =>
 )
 
 async function load() {
-  memories.value = await api.get<any[]>('/memories')
+  const requestedLocale = String(locale.value)
+  error.value = ''
+  const loaded = await api.get<any[]>('/memories')
+  if (requestedLocale !== String(locale.value)) return
+  if (!loaded.some((item) => item.interfaceLocale !== requestedLocale)) {
+    memories.value = loaded.filter((item) => item.interfaceLocale === requestedLocale)
+    return
+  }
+  try {
+    const localized = await api.post<any[]>('/memories/localize', { interfaceLocale: requestedLocale })
+    if (requestedLocale === String(locale.value)) {
+      memories.value = localized.filter((item) => item.interfaceLocale === requestedLocale)
+    }
+  } catch {
+    if (requestedLocale === String(locale.value)) {
+      memories.value = loaded.filter((item) => item.interfaceLocale === requestedLocale)
+      error.value = t('memories.updateError')
+    }
+  }
 }
 onMounted(load)
+watch(locale, () => {
+  cancelEdit()
+  memories.value = []
+  void load()
+})
 
 const groups = computed(() => ({
   core: memories.value.filter((memory) => memory.tier === 'core'),
@@ -40,7 +63,7 @@ function cancelEdit() {
 }
 async function save(item: any) {
   if (!memoryDirty.value) return
-  await api.put(`/memories/${item.id}`, { value: value.value.trim() })
+  await api.put(`/memories/${item.id}`, { value: value.value.trim(), interfaceLocale: String(locale.value) })
   cancelEdit()
   await load()
 }
@@ -56,7 +79,7 @@ async function toggleTier(item: any) {
   } catch (value) {
     error.value = value instanceof ApiError && value.code === 'CORE_MEMORY_LIMIT'
       ? t('memories.coreLimit')
-      : value instanceof Error ? value.message : t('memories.updateError')
+      : t('memories.updateError')
   }
 }
 function formatDate(value: string) {
@@ -74,9 +97,9 @@ function formatDate(value: string) {
         <div class="memory-title"><div><h2>{{ t(`memory.category.${key}`) }}</h2><p>{{ t(`memories.${key}Help`) }}</p></div></div>
         <div class="memory-list">
           <article v-for="item in items" :key="item.id" class="card">
-            <span v-if="item.sensitive" class="sensitive">{{ t('memories.sensitive') }}</span><span v-else-if="item.tier === 'core'">{{ t('memory.category.core') }}</span><b>{{ item.key }}</b>
+            <span v-if="item.sensitive" class="sensitive">{{ t('memories.sensitive') }}</span><span v-else-if="item.tier === 'core'">{{ t('memory.category.core') }}</span>
             <template v-if="editing === item.id"><input v-model="value" @keydown.enter="save(item)" /><div><button class="btn small primary" :disabled="!memoryDirty" @click="save(item)">{{ t('common.save') }}</button><button class="btn small" @click="cancelEdit">{{ t('common.cancel') }}</button></div></template>
-            <template v-else><p>{{ item.value }}</p><div class="memory-meta"><span v-if="item.topic && item.topic !== 'general'">{{ item.topic }}</span><span v-if="item.useCount">{{ t('memories.usedCount', { count: item.useCount }) }}</span></div><footer><small>{{ formatDate(item.updatedAt) }}</small><div><button @click="toggleTier(item)">{{ item.tier === 'core' ? t('memories.demote') : t('memories.promote') }}</button><button @click="edit(item)">{{ t('common.edit') }}</button><button @click="remove(item.id)">{{ t('common.delete') }}</button></div></footer></template>
+            <template v-else><p>{{ item.value }}</p><div class="memory-meta"><span v-if="item.useCount">{{ t('memories.usedCount', { count: item.useCount }) }}</span></div><footer><small>{{ formatDate(item.updatedAt) }}</small><div><button @click="toggleTier(item)">{{ item.tier === 'core' ? t('memories.demote') : t('memories.promote') }}</button><button @click="edit(item)">{{ t('common.edit') }}</button><button @click="remove(item.id)">{{ t('common.delete') }}</button></div></footer></template>
           </article>
           <div v-if="!items.length" class="group-empty">{{ t('memories.groupEmpty') }}</div>
         </div>

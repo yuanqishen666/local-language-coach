@@ -249,7 +249,7 @@ async function runningFromRuntime() {
 }
 
 async function main() {
-  console.log(`言习${mode === 'dev' ? '开发环境' : ''}正在准备\n`)
+  console.log(`语见${mode === 'dev' ? '开发环境' : ''}正在准备\n`)
   await clearStaleRuntime()
   const initialReport = await runChecks({ mode, quick: true, includePort: false })
   const logFile = await prepareLog().catch(() => undefined)
@@ -268,7 +268,7 @@ async function main() {
     const preferred = await configuredPort()
     const existing = await runningFromRuntime() || await healthAt(preferred)
     if (existing) {
-      log('\n检测到言习已经在运行。')
+      log('\n检测到语见已经在运行。')
       log(`访问地址：${existing.url}`)
       if (openBrowser(existing.url)) log('已打开浏览器。')
       return
@@ -364,7 +364,7 @@ async function main() {
 main().catch(async (error) => {
   const message = error instanceof Error ? error.message : String(error)
   await appendFile(path.join(dataRoot, 'logs', 'bootstrap-unhandled.log'), `${new Date().toISOString()} ${redact(message)}\n`).catch(() => {})
-  console.error(`\n言习无法启动：${message}`)
+  console.error(`\n语见无法启动：${message}`)
   console.error(`错误编号：${error?.code || 'BOOTSTRAP_INTERNAL_ERROR'}`)
   console.error('\n请运行 npm run doctor -- --verbose 获取完整检查结果。')
   process.exitCode = 1

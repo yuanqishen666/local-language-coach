@@ -4,6 +4,7 @@ import { getConfig, getSecrets } from '../services/config.js'
 import { parseModelJson } from '../utils/json.js'
 import { coachTurnSchema, providerCertificationSchema, responseJsonSchema } from './schemas.js'
 import { probeProviderLookup } from '../lookup/provider-tools.js'
+import { hasQuestion, isQuestionOnly } from './dialogue-policy.js'
 
 export interface ModelMessage { role: 'system' | 'user' | 'assistant'; content: string }
 
@@ -38,7 +39,7 @@ export interface ProviderModelOption {
   maxOutputTokens?: number
 }
 
-export const STRUCTURED_CONTRACT_VERSION = 6
+export const STRUCTURED_CONTRACT_VERSION = 7
 
 const pendingCertifications = new Map<string, {
   providerId: string
@@ -422,10 +423,11 @@ export async function testProvider(providerId: string, overrides: ProviderTestOv
         {
           role: 'system',
           content: [
-            'Return one JSON object with a cases array. For every case write a natural English conversation reply, decide lookupAction as reply/clarify/lookup, and give locatorDomain only when the user specified a location.',
+            'Return one JSON object with a cases array. For every case write one compact natural English conversation reply, decide lookupAction as reply/clarify/lookup, and give locatorDomain only when the user specified a location.',
             'A reply must not be a questionnaire. Answer clear questions before any follow-up. Hold a plausible opinion. Never replace Boracay with Bohol.',
             'Use lookup for facts that may have changed, current availability, explicit lookup requests, and user-specified locations. Use reply for stable advice and ordinary conversation. Use clarify only when a missing identity or missing subject makes lookup impossible.',
-            'Required case ids: share, opinion, stable, dynamic, locator, entity.',
+            'When a case contains a short transcript, reply only to its final User turn. After two recent assistant questions, contribute without asking another question. Respect an explicit refusal to discuss a branch. Respond to emotion before changing subject.',
+            'Required case ids: share, opinion, stable, dynamic, locator, entity, question_streak, boundary, support.',
           ].join('\n'),
         },
         {
@@ -437,6 +439,9 @@ export async function testProvider(providerId: string, overrides: ProviderTestOv
             '[dynamic] Who is on the Houston Rockets roster right now?',
             '[locator] I saw a Reddit post saying the Rockets traded Alperen Sengun today. Can you look there?',
             '[entity] Can you still do sunset sailing in Boracay now?',
+            '[question_streak] Assistant: What do you do? User: I am a software developer. Assistant: Do you mostly build web apps? User: Mostly backend services. User: AI has changed my work a lot lately.',
+            '[boundary] Assistant: Do you often work overtime? User: I would rather not talk about my work hours.',
+            '[support] User: I shipped the project, but I am too exhausted to feel happy.',
           ].join('\n'),
         },
       ], { structured: { name: 'conversation_readiness', schema: certificationSchema }, outputMode, temperature: 0.2, maxOutputTokens: 1_200, timeoutMs: 25_000, retries: 0 })
@@ -450,16 +455,15 @@ export async function testProvider(providerId: string, overrides: ProviderTestOv
           : [],
       })
       const cases = new Map(certification.cases.map((item) => [item.id, item]))
-      const questionOnly = (value: string) => {
-        const parts = value.split(/(?<=[.!?。！？])|\n+/u).map((part) => part.trim()).filter(Boolean)
-        return Boolean(parts.length && parts.every((part) => /[?？]\s*$/u.test(part)))
-      }
-      const required = ['share', 'opinion', 'stable', 'dynamic', 'locator', 'entity']
+      const required = ['share', 'opinion', 'stable', 'dynamic', 'locator', 'entity', 'question_streak', 'boundary', 'support']
       const failures: string[] = []
       for (const id of required) if (!cases.has(id)) failures.push(`missing ${id}`)
       if (!failures.length) {
-        if (questionOnly(cases.get('share')!.reply)) failures.push('share was question-only')
-        if (questionOnly(cases.get('opinion')!.reply)) failures.push('opinion was question-only')
+        if (isQuestionOnly(cases.get('share')!.reply)) failures.push('share was question-only')
+        if (isQuestionOnly(cases.get('opinion')!.reply)) failures.push('opinion was question-only')
+        if (hasQuestion(cases.get('question_streak')!.reply)) failures.push('question_streak asked another question')
+        if (hasQuestion(cases.get('boundary')!.reply)) failures.push('boundary asked another question')
+        if (isQuestionOnly(cases.get('support')!.reply)) failures.push('support was question-only')
         if (cases.get('stable')!.lookupAction !== 'reply') failures.push(`stable routed as ${cases.get('stable')!.lookupAction}`)
         if (cases.get('dynamic')!.lookupAction !== 'lookup') failures.push(`dynamic routed as ${cases.get('dynamic')!.lookupAction}`)
         if (cases.get('locator')!.lookupAction !== 'lookup') failures.push(`locator routed as ${cases.get('locator')!.lookupAction}`)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '../api'
@@ -27,14 +27,31 @@ const partnerInitial = computed(() => {
   const name = conversation.value?.setup?.partnerName || conversation.value?.setup?.partnerRole || t('product.name')
   return [...name.trim()][0] || '•'
 })
+const setupMatchesLocale = computed(() => !conversation.value?.setup ||
+  conversation.value.interfaceLocale === String(locale.value))
+const conversationTitle = computed(() => {
+  if (!conversation.value) return ''
+  if (conversation.value.interfaceLocale === String(locale.value)) return conversation.value.title
+  return conversation.value.setup ? t('history.scene') : t('history.direct')
+})
+let loadVersion = 0
 
 onMounted(async () => {
   input.value = sessionStorage.getItem(draftKey.value) || ''
   await load()
 })
 
+watch(locale, async () => {
+  lookup.value.open = false
+  await load()
+})
+
 async function load() {
-  conversation.value = await api.get<Conversation>(`/conversations/${route.params.id}`)
+  const version = ++loadVersion
+  const requestedLocale = String(locale.value)
+  const loaded = await api.get<Conversation>(`/conversations/${route.params.id}?interfaceLocale=${encodeURIComponent(requestedLocale)}`)
+  if (version !== loadVersion || requestedLocale !== String(locale.value)) return
+  conversation.value = loaded
   await scrollEnd()
 }
 
@@ -82,7 +99,11 @@ async function send() {
   await scrollEnd().catch(() => undefined)
   let result: { userMessage: Message; assistantMessage: Message; status: 'active' }
   try {
-    result = await api.post<{ userMessage: Message; assistantMessage: Message; status: 'active' }>(`/conversations/${route.params.id}/messages`, { content: text, clientMessageId })
+    result = await api.post<{ userMessage: Message; assistantMessage: Message; status: 'active' }>(`/conversations/${route.params.id}/messages`, {
+      content: text,
+      clientMessageId,
+      interfaceLocale: String(locale.value),
+    })
   } catch (value: unknown) {
     input.value = text
     failOptimisticTurn(optimisticTurn.message)
@@ -112,7 +133,7 @@ async function send() {
 
 function openLookup(term: string, sentence: string) { lookup.value = { open: true, term, sentence } }
 async function saveMemory(item: NonNullable<MessageMeta['memoryCandidates']>[number]) {
-  await api.post('/memories', { ...item, status: 'confirmed', sourceConversationId: route.params.id })
+  await api.post('/memories', { ...item, status: 'confirmed', sourceConversationId: route.params.id, interfaceLocale: String(locale.value) })
   for (const message of conversation.value?.messages || []) {
     if (!message.meta.memoryCandidates) continue
     message.meta.memoryCandidates = message.meta.memoryCandidates.filter((candidate) => candidate !== item)
@@ -134,8 +155,8 @@ function feedbackFor(index: number): MessageMeta | undefined {
     <header class="conversation-head">
       <button :aria-label="t('common.close')" @click="router.push('/')"><AppIcon name="close" /></button>
       <div class="head-title">
-        <span>{{ conversation.setup?.partnerName || conversation.setup?.partnerRole || t('conversation.openLabel') }}</span>
-        <b>{{ conversation.title }}</b>
+        <span>{{ setupMatchesLocale ? conversation.setup?.partnerName || conversation.setup?.partnerRole || t('conversation.openLabel') : t('conversation.openLabel') }}</span>
+        <b>{{ conversationTitle }}</b>
       </div>
       <span class="always-open"><i></i>{{ t('conversation.alwaysOpen') }}</span>
     </header>
@@ -143,7 +164,7 @@ function feedbackFor(index: number): MessageMeta | undefined {
     <main class="chat-column" :aria-busy="sending">
       <div ref="chat" class="message-list">
         <div class="session-start"><span>{{ formatDate(conversation.createdAt) }}</span></div>
-        <section v-if="conversation.setup" class="conversation-context">
+        <section v-if="conversation.setup && setupMatchesLocale" class="conversation-context">
           <div class="partner-avatar">{{ (conversation.setup.partnerName || conversation.setup.partnerRole).slice(0, 1) }}</div>
           <div><b>{{ conversation.setup.partnerName || conversation.setup.partnerRole }}</b><span>{{ conversation.setup.partnerRole }} · {{ conversation.setup.setting }}</span></div>
           <p>{{ conversation.setup.topicSeed }}</p>

@@ -100,6 +100,66 @@ export type MemoryTier = 'core' | 'long_term'
 export type MemoryType = 'preference' | 'constraint' | 'profile' | 'learning' | 'episodic'
 export type MemoryReplyType = 'casual' | 'recommendation' | 'planning' | 'learning' | 'factual' | 'support' | 'other'
 
+export type DialogueMode = 'casual' | 'story' | 'support' | 'task' | 'opinion' | 'learning'
+export type DialogueMove = 'answer' | 'react' | 'observe' | 'associate' | 'callback' | 'share' | 'clarify'
+export type PreviousMoveOutcome = 'continued' | 'switched' | 'rejected' | 'corrected' | 'unclear' | 'none'
+
+export interface DialoguePlan {
+  mode: DialogueMode
+  anchorQuote: string
+  anchorMeaning: string
+  move: DialogueMove
+  topic: string
+  branch: string
+  contribution: string
+  questionPolicy: 'none' | 'optional' | 'required'
+  questionPurpose: string
+  previousMoveOutcome: PreviousMoveOutcome
+  callbackMemoryKey: string
+  reopenBranch: boolean
+}
+
+export interface DialogueDynamics {
+  assistantTurns: number
+  questionTurns: number
+  questionOnlyTurns: number
+  questionTurnRate: number
+  consecutiveQuestionTurns: number
+  userAnswerBurden: number
+  recentOpeners: string[]
+  recentOnlyAgreement: boolean
+  repeatedOpener: boolean
+}
+
+export interface DialoguePolicy {
+  questionBudget: 0 | 1
+  questionRequired: boolean
+  mustContribute: boolean
+  allowedBranch: string
+  forbiddenBranches: string[]
+  reason: string
+}
+
+export interface DialogueMoveRecord {
+  assistantMessageId: string
+  move: DialogueMove
+  topic: string
+  branch: string
+  askedQuestion: boolean
+  memoryIds: string[]
+  createdAt: string
+}
+
+export interface TopicMomentum {
+  topic: string
+  branch: string
+  score: number
+  status: 'active' | 'dormant' | 'closed'
+  continuedCount: number
+  switchedCount: number
+  lastTouchedAt: string
+}
+
 export interface MemoryFact {
   key: string
   value: string
@@ -171,6 +231,9 @@ export interface ConversationState {
   openLoops: ConversationOpenLoop[]
   sceneFacts: ConversationFact[]
   lastCompactedMessageId: string
+  recentMoves: DialogueMoveRecord[]
+  topicMomentum: TopicMomentum[]
+  recentMemoryIds: string[]
 }
 
 export interface ConversationStatePatch {
@@ -191,6 +254,17 @@ export interface ConversationEpisode {
   facts: Array<{ value: string; quote: string; source: 'user' | 'partner' | 'scene'; sourceMessageId: string }>
   openLoops: string[]
   keywords: string[]
+  topicArcs: Array<{
+    topic: string
+    status: 'active' | 'dormant' | 'closed'
+    sourceMessageIds: string[]
+  }>
+  interactionSignals: Array<{
+    kind: 'engaged' | 'topic_switch' | 'topic_rejected' | 'assistant_corrected' | 'style_preference'
+    value: string
+    sourceMessageId: string
+    quote: string
+  }>
   createdAt: string
   updatedAt: string
 }

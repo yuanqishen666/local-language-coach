@@ -14,6 +14,8 @@ db.exec(`
     mode TEXT NOT NULL,
     title TEXT NOT NULL,
     setup_json TEXT,
+    interface_locale TEXT NOT NULL DEFAULT '',
+    localized_setups_json TEXT NOT NULL DEFAULT '{}',
     state_json TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     archived_at TEXT,
@@ -30,6 +32,8 @@ db.exec(`
     facts_json TEXT NOT NULL DEFAULT '[]',
     open_loops_json TEXT NOT NULL DEFAULT '[]',
     keywords_json TEXT NOT NULL DEFAULT '[]',
+    topic_arcs_json TEXT NOT NULL DEFAULT '[]',
+    interaction_signals_json TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
@@ -49,6 +53,7 @@ db.exec(`
     term TEXT NOT NULL,
     lemma TEXT NOT NULL,
     language TEXT NOT NULL,
+    interface_locale TEXT NOT NULL DEFAULT '',
     meaning TEXT NOT NULL,
     details_json TEXT NOT NULL,
     source_sentence TEXT,
@@ -65,6 +70,8 @@ db.exec(`
     category TEXT NOT NULL,
     key TEXT NOT NULL,
     value TEXT NOT NULL,
+    interface_locale TEXT NOT NULL DEFAULT '',
+    localized_values_json TEXT NOT NULL DEFAULT '{}',
     tier TEXT NOT NULL DEFAULT 'long_term',
     memory_type TEXT NOT NULL DEFAULT 'preference',
     topic TEXT NOT NULL DEFAULT 'general',
@@ -80,6 +87,8 @@ db.exec(`
     valid_to TEXT,
     last_used_at TEXT,
     use_count INTEGER NOT NULL DEFAULT 0,
+    last_mentioned_at TEXT,
+    mention_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(category, key)
@@ -120,24 +129,33 @@ db.exec(`
   );
 `)
 
-function ensureMemoryColumn(name: string, definition: string) {
-  const columns = new Set((db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>).map((column) => column.name))
-  if (!columns.has(name)) db.exec(`ALTER TABLE memories ADD COLUMN ${name} ${definition}`)
+function ensureTableColumn(table: 'conversations' | 'conversation_episodes' | 'word_entries' | 'memories', name: string, definition: string) {
+  const columns = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name))
+  if (!columns.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`)
 }
 
 // SQLite CREATE TABLE IF NOT EXISTS does not add columns to an existing local
 // database. These additive migrations keep every previously saved memory.
-ensureMemoryColumn('tier', "TEXT NOT NULL DEFAULT 'long_term'")
-ensureMemoryColumn('memory_type', "TEXT NOT NULL DEFAULT 'preference'")
-ensureMemoryColumn('topic', "TEXT NOT NULL DEFAULT 'general'")
-ensureMemoryColumn('importance', 'REAL NOT NULL DEFAULT 0.5')
-ensureMemoryColumn('pinned', 'INTEGER NOT NULL DEFAULT 0')
-ensureMemoryColumn('source_message_id', 'TEXT')
-ensureMemoryColumn('supersedes_id', 'TEXT')
-ensureMemoryColumn('valid_from', 'TEXT')
-ensureMemoryColumn('valid_to', 'TEXT')
-ensureMemoryColumn('last_used_at', 'TEXT')
-ensureMemoryColumn('use_count', 'INTEGER NOT NULL DEFAULT 0')
+ensureTableColumn('conversations', 'interface_locale', "TEXT NOT NULL DEFAULT ''")
+ensureTableColumn('conversations', 'localized_setups_json', "TEXT NOT NULL DEFAULT '{}'")
+ensureTableColumn('conversation_episodes', 'topic_arcs_json', "TEXT NOT NULL DEFAULT '[]'")
+ensureTableColumn('conversation_episodes', 'interaction_signals_json', "TEXT NOT NULL DEFAULT '[]'")
+ensureTableColumn('word_entries', 'interface_locale', "TEXT NOT NULL DEFAULT ''")
+ensureTableColumn('memories', 'interface_locale', "TEXT NOT NULL DEFAULT ''")
+ensureTableColumn('memories', 'localized_values_json', "TEXT NOT NULL DEFAULT '{}'")
+ensureTableColumn('memories', 'tier', "TEXT NOT NULL DEFAULT 'long_term'")
+ensureTableColumn('memories', 'memory_type', "TEXT NOT NULL DEFAULT 'preference'")
+ensureTableColumn('memories', 'topic', "TEXT NOT NULL DEFAULT 'general'")
+ensureTableColumn('memories', 'importance', 'REAL NOT NULL DEFAULT 0.5')
+ensureTableColumn('memories', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
+ensureTableColumn('memories', 'source_message_id', 'TEXT')
+ensureTableColumn('memories', 'supersedes_id', 'TEXT')
+ensureTableColumn('memories', 'valid_from', 'TEXT')
+ensureTableColumn('memories', 'valid_to', 'TEXT')
+ensureTableColumn('memories', 'last_used_at', 'TEXT')
+ensureTableColumn('memories', 'use_count', 'INTEGER NOT NULL DEFAULT 0')
+ensureTableColumn('memories', 'last_mentioned_at', 'TEXT')
+ensureTableColumn('memories', 'mention_count', 'INTEGER NOT NULL DEFAULT 0')
 
 db.exec(`
   UPDATE memories SET valid_from = created_at WHERE valid_from IS NULL;
@@ -151,7 +169,8 @@ db.exec('CREATE INDEX IF NOT EXISTS translation_cache_accessed_index ON translat
 db.exec('CREATE INDEX IF NOT EXISTS ai_response_cache_accessed_index ON ai_response_cache(cache_type, last_accessed DESC)')
 db.exec('CREATE INDEX IF NOT EXISTS conversation_episodes_conversation_index ON conversation_episodes(conversation_id, created_at)')
 db.exec('CREATE INDEX IF NOT EXISTS web_lookup_cache_expiry_index ON web_lookup_cache(expires_at)')
-db.exec('CREATE INDEX IF NOT EXISTS memories_retrieval_index ON memories(status, sensitive, tier, topic, updated_at DESC)')
+db.exec('DROP INDEX IF EXISTS memories_retrieval_index')
+db.exec('CREATE INDEX memories_retrieval_index ON memories(status, tier, topic, updated_at DESC)')
 db.exec('CREATE INDEX IF NOT EXISTS memory_revisions_memory_index ON memory_revisions(memory_id, created_at DESC)')
 export function rows<T>(statement: string, ...params: any[]): T[] {
   return db.prepare(statement).all(...params) as T[]

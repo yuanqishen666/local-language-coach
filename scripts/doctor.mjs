@@ -54,7 +54,7 @@ try {
   if (json) {
     process.stdout.write(`${JSON.stringify({ ...report, ...(repair ? { repair } : {}) }, null, 2)}\n`)
   } else {
-    console.log('言习环境检查\n')
+    console.log('语见环境检查\n')
     if (repair) console.log(`${repair.changed ? '✓' : '•'} ${repair.message}\n`)
     for (const item of report.results) {
       console.log(`${icon(item.status)} ${item.title}`)

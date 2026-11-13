@@ -53,7 +53,7 @@ async function finish() {
 
 <template>
   <main class="onboard">
-    <header><div class="brand-mark">言</div><b>{{ t('product.name') }} <span>{{ t('onboarding.brandSubtitle') }}</span></b><div class="step-label">{{ step }} / 3</div></header>
+    <header><div class="brand-mark">见</div><b>{{ t('product.name') }} <span>{{ t('onboarding.brandSubtitle') }}</span></b><div class="step-label">{{ step }} / 3</div></header>
     <section class="onboard-body">
       <div class="onboard-copy">
         <h1 v-if="step===1">{{ t('onboarding.interfaceTitle') }}</h1>

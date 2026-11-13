@@ -1,14 +1,14 @@
-# Yanxi · Local Language Coach
+# Yujian · Local Language Coach
 
 English · [简体中文](./README.zh-CN.md)
 
 Practice real conversations on your own computer, using a model provider you already have.
 
-Yanxi does not turn every conversation into a lesson or an interview. Start talking right away, or choose a person and setting first. The conversation can change direction naturally, and your partner responds to what you actually said.
+Yujian does not turn every conversation into a lesson or an interview. Start talking right away, or choose a person and setting first. The conversation can change direction naturally, and your partner responds to what you actually said.
 
-> **Keep Yanxi running at home and continue from your phone while you are out.** The built-in protected Quick Tunnel gives you a temporary address without renting a server, buying a domain, or creating a Cloudflare account.
+> **Keep Yujian running at home and continue from your phone while you are out.** The built-in protected Quick Tunnel gives you a temporary address without renting a server, buying a domain, or creating a Cloudflare account.
 
-![Yanxi home screen](./assets/readme/en/overview.png)
+![Yujian home screen](./assets/readme/en/overview.png)
 
 ## What you can do
 
@@ -25,7 +25,7 @@ Yanxi does not turn every conversation into a lesson or an interview. Start talk
 
 ## Supported languages
 
-Yanxi currently supports 10 target languages:
+Yujian currently supports 10 target languages:
 
 - English
 - Spanish
@@ -50,7 +50,7 @@ You need:
 
 You do not need Docker, a separate database, a global pnpm installation, a cloud server, or a domain.
 
-> Model providers may charge for API usage. Yanxi does not collect those fees.
+> Model providers may charge for API usage. Yujian does not collect those fees.
 
 ## Download and run
 
@@ -135,9 +135,9 @@ The review page schedules practice from the words you have kept. Removing a word
 
 Web search is off by default. Turn it on under **Settings → Web**.
 
-When enabled, Yanxi searches only when a reply depends on current information, such as a team roster, recent event, opening status, weather, or current price. Everyday conversation and language corrections do not trigger a search.
+When enabled, Yujian searches only when a reply depends on current information, such as a team roster, recent event, opening status, weather, or current price. Everyday conversation and language corrections do not trigger a search.
 
-If you share a URL, post, account, or platform location, Yanxi checks that location first. This permission applies only to the current turn.
+If you share a URL, post, account, or platform location, Yujian checks that location first. This permission applies only to the current turn.
 
 ## Supported providers
 
@@ -149,7 +149,7 @@ If you share a URL, post, account, or platform location, Yanxi checks that locat
 | DeepSeek | DeepSeek API key |
 | Moonshot / Kimi | Moonshot API key |
 
-Yanxi connects only to official provider APIs. A model must pass conversation, structured-response, and web-search checks before it can be saved as an available model.
+Yujian connects only to official provider APIs. A model must pass conversation, structured-response, and web-search checks before it can be saved as an available model.
 
 The selected provider handles both the conversation and any search required for that turn. There is no separate background search model.
 
@@ -172,13 +172,13 @@ data/
 
 Do not commit the `data/` folder to a public repository.
 
-Yanxi includes no telemetry. Only the currently selected provider receives the content needed to generate the current reply.
+Yujian includes no telemetry. Only the currently selected provider receives the content needed to generate the current reply.
 
 ## Use it from your phone — no server required
 
-Yanxi normally accepts connections only from the computer running it. When you are away from home, its built-in protected Quick Tunnel can create a temporary HTTPS address for your phone. There is no server to rent and no Cloudflare account or domain to configure.
+Yujian normally accepts connections only from the computer running it. When you are away from home, its built-in protected Quick Tunnel can create a temporary HTTPS address for your phone. There is no server to rent and no Cloudflare account or domain to configure.
 
-1. Start Yanxi on your computer and leave that terminal running:
+1. Start Yujian on your computer and leave that terminal running:
 
 ```bash
 npm start
@@ -201,7 +201,7 @@ npm run app -- remote status
 npm run app -- remote stop
 ```
 
-This uses Cloudflare's [free Quick Tunnel](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/). The address changes whenever a new tunnel starts and has no uptime guarantee. Your computer, Yanxi, and the tunnel process must remain running. Remote traffic passes through Cloudflare, while the API keys and local database remain on your computer. Your model provider may still charge for model usage.
+This uses Cloudflare's [free Quick Tunnel](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/). The address changes whenever a new tunnel starts and has no uptime guarantee. Your computer, Yujian, and the tunnel process must remain running. Remote traffic passes through Cloudflare, while the API keys and local database remain on your computer. Your model provider may still charge for model usage.
 
 ## Troubleshooting
 
@@ -227,7 +227,7 @@ Copy the local address shown in the terminal and open it manually.
 
 Check the API key, account balance, model name, and network connection. Keys from different providers are not interchangeable.
 
-### Updating Yanxi
+### Updating Yujian
 
 Pull or download the latest code, then run `npm start` again. The launcher checks the dependencies and rebuilds the app when needed. Existing practice data is kept.
 
