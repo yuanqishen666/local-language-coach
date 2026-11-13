@@ -2,30 +2,28 @@
 
 English · [简体中文](./README.zh-CN.md)
 
-Practice real conversations on your own computer, using a model provider you already have.
+Practice conversations that can carry a thread—on your own computer, with the model you choose.
 
-Yujian does not turn every conversation into a lesson or an interview. Start talking right away, or choose a person and setting first. The conversation can change direction naturally, and your partner responds to what you actually said.
-
-> **Keep Yujian running at home and continue from your phone while you are out.** The built-in protected Quick Tunnel gives you a temporary address without renting a server, buying a domain, or creating a Cloudflare account.
+Start with your first sentence, or set up a conversation first. Yujian responds to what you said before offering corrections, definitions, or more natural phrasing. Anything remembered for later stays under your control.
 
 ![Yujian home screen](./assets/readme/en/overview.png)
 
 ## What you can do
 
 - **Start talking immediately** — no lesson or task setup required.
-- **Create a setting** — choose a person, place, and loose opening topic.
-- **Get corrections without breaking the conversation** — suggestions stay below your message.
-- **Look up words in context** — double-click, select, or long-press part of a reply.
-- **Build a word list** — save only the words you want to keep and review them later.
+- **Set up a conversation** — choose a theme, add a situation or topic, then pick a partner and opening.
+- **Keep the thread moving naturally** — continue, change, or close a topic without being pulled back to an unwanted question.
+- **Get lightweight corrections** — the conversation comes first, with suggestions below your message.
+- **Look up and translate in context** — double-click, select, or long-press part of a reply.
+- **Choose what is remembered** — nothing is saved until you approve it, and every memory can be edited, deleted, or made core.
+- **Build a wordbook and review it** — keep the expressions that matter and revisit them later.
 - **Continue old conversations** — reopen any conversation and carry on where you left off.
-- **Use it away from home without renting a server** — open a protected temporary address from your phone.
-- **Practise 10 languages** — switch the language you are learning without reinstalling or creating another workspace.
 - **Search when current information matters** — optional and off by default.
-- **Keep your data local** — conversations, settings, memories, and API keys stay on your computer.
+- **Keep your data local** — conversations, reviews, settings, memories, and API keys stay on your computer.
 
 ## Supported languages
 
-Yujian currently supports 10 target languages:
+Yujian supports conversation practice in these 10 languages:
 
 - English
 - Spanish
@@ -38,7 +36,20 @@ Yujian currently supports 10 target languages:
 - Portuguese
 - Hindi
 
-The interface is also available in Simplified Chinese, English, Latin American Spanish, French, Japanese, German, Korean, Italian, Brazilian Portuguese, and Hindi. The interface language and the language you are practising can be changed separately.
+The interface is also available in 10 languages:
+
+- Simplified Chinese
+- English
+- Latin American Spanish
+- French
+- Japanese
+- German
+- Korean
+- Italian
+- Brazilian Portuguese
+- Hindi
+
+The interface language and target language can be configured separately. Conversations use the target language, while corrections, definitions, translations, and memory content use the selected interface language.
 
 ## Requirements
 
@@ -98,7 +109,7 @@ You can also use the launcher for your operating system:
 3. Choose a provider and model.
 4. Enter the API key.
 5. Test the connection, then save it.
-6. Return to the home page and start a conversation.
+6. Return to the home page and choose an open conversation or a conversation setting.
 
 The API key stays on your computer. It is not shown in conversations or diagnostic logs.
 
@@ -108,28 +119,31 @@ The API key stays on your computer. It is not shown in conversations or diagnost
 
 ### Open conversation
 
-Say whatever is on your mind. This works well for everyday conversation, expression practice, and topics that change as you talk.
+Choose “Start a conversation” on the home page and say the first thing that comes to mind. There is no preset task or fixed path to follow.
 
 ### Conversation setting
 
-Give the conversation a loose starting point, such as:
+Choose a theme and optionally add a situation or topic. Yujian creates a few possible partners and openings for you to choose from.
 
-- Talking about weekend plans with a colleague
-- Meeting someone at a café
-- Discussing a basketball game with a local
-- Asking about transport and weather while travelling
+The setting decides how the conversation starts, not where it has to go.
 
-The setting starts the conversation; it does not lock you into a script.
+![Conversation setting](./assets/readme/en/scene-builder.png)
 
-![Conversation with lightweight corrections](./assets/readme/en/conversation.png)
+## Conversation, corrections, and memory
+
+Replies address the current thread first. When a correction is useful, it stays below your message instead of taking over the conversation.
+
+If something may be useful in a later conversation, Yujian asks before saving it. Unapproved details do not enter memory. Saved items can be reviewed, edited, deleted, or made core at any time.
+
+![Conversation with lightweight corrections and controlled memory](./assets/readme/en/conversation.png)
+
+![Memories](./assets/readme/en/memories.png)
 
 ## Word lookup and review
 
 Double-click, select, or long-press unfamiliar text in your partner's message to look it up in context. A word enters your word list only when you save it.
 
 The review page schedules practice from the words you have kept. Removing a word also removes its review schedule.
-
-![Word list](./assets/readme/en/wordbook.png)
 
 ## Web search
 
@@ -149,7 +163,7 @@ If you share a URL, post, account, or platform location, Yujian checks that loca
 | DeepSeek | DeepSeek API key |
 | Moonshot / Kimi | Moonshot API key |
 
-Yujian connects only to official provider APIs. A model must pass conversation, structured-response, and web-search checks before it can be saved as an available model.
+Yujian connects only to official provider APIs. A model must pass multi-turn conversation, structured-response, and web-search checks before it can be saved as an available model.
 
 The selected provider handles both the conversation and any search required for that turn. There is no separate background search model.
 
