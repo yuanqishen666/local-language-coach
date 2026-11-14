@@ -72,7 +72,8 @@ export function validateConfig(input: AppConfig): AppConfig {
     }
     if (provider.capability) {
       const capability = provider.capability
-      if (capability.conversationReady !== true || capability.lookupReady !== true || capability.contractVersion !== 6 ||
+      if (capability.conversationReady !== true || capability.lookupReady !== true ||
+        !Number.isInteger(capability.contractVersion) || capability.contractVersion < 1 ||
         capability.baseUrl.replace(/\/$/, '') !== provider.baseUrl.replace(/\/$/, '') || capability.model !== provider.model ||
         !['json_schema', 'json_object', 'prompt_json'].includes(capability.outputMode) || typeof capability.testedAt !== 'string') {
         throw new Error(`Provider capability is stale or invalid: ${expected.id}`)

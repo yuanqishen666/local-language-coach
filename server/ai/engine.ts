@@ -84,7 +84,7 @@ interface StructuredTask<T extends z.ZodType> {
   usable: (value: z.output<T>) => boolean
 }
 
-async function generateStructured<T extends z.ZodType>(client: ModelClient, messages: ModelMessage[], task: StructuredTask<T>): Promise<z.output<T>> {
+export async function generateStructured<T extends z.ZodType>(client: ModelClient, messages: ModelMessage[], task: StructuredTask<T>): Promise<z.output<T>> {
   const schema = responseJsonSchema(task.schema)
   const baseMessages = client.outputMode === 'json_schema'
     ? messages
@@ -193,26 +193,36 @@ export function normalizeTurnAnalysis(value: unknown, latestUser: string) {
   const source = record(value)
   const reconstruction = record(source.reconstruction)
   const reconstructionType = text(reconstruction.type)
+  const corrections = (Array.isArray(source.corrections) ? source.corrections : []).map((item) => {
+    const correction = record(item)
+    const severity = text(correction.severity)
+    return {
+      original: text(correction.original),
+      improved: text(correction.improved),
+      explanation: text(correction.explanation),
+      severity: (['meaning', 'naturalness', 'minor'].includes(severity) ? severity : 'naturalness') as 'meaning' | 'naturalness' | 'minor',
+    }
+  }).filter((item) => item.original && latestUser.includes(item.original) && item.improved && item.improved !== item.original)
+  const stringReconstruction = typeof source.reconstruction === 'string' && !/^(?:null|none)$/iu.test(source.reconstruction.trim())
+    ? source.reconstruction.trim()
+    : ''
+  const reconstructionImproved = text(reconstruction.improved || stringReconstruction)
+  const normalizedStringReconstruction = Boolean(stringReconstruction && !reconstruction.improved)
   return {
     lookup: normalizeLookupDecision(source.lookup),
-    reconstruction: source.reconstruction && text(reconstruction.improved)
+    reconstruction: reconstructionImproved
       ? {
-          type: (['completion', 'translation', 'correction', 'optional'].includes(reconstructionType) ? reconstructionType : 'correction') as 'completion' | 'translation' | 'correction' | 'optional',
-          original: text(reconstruction.original),
-          improved: text(reconstruction.improved),
-          explanation: text(reconstruction.explanation),
+          type: (['completion', 'translation', 'correction', 'optional'].includes(reconstructionType)
+            ? reconstructionType
+            : normalizedStringReconstruction ? 'completion' : 'correction') as 'completion' | 'translation' | 'correction' | 'optional',
+          original: normalizedStringReconstruction ? latestUser : text(reconstruction.original),
+          improved: reconstructionImproved,
+          explanation: normalizedStringReconstruction
+            ? corrections[0]?.explanation || ''
+            : text(reconstruction.explanation),
         }
       : null,
-    corrections: (Array.isArray(source.corrections) ? source.corrections : []).map((item) => {
-      const correction = record(item)
-      const severity = text(correction.severity)
-      return {
-        original: text(correction.original),
-        improved: text(correction.improved),
-        explanation: text(correction.explanation),
-        severity: (['meaning', 'naturalness', 'minor'].includes(severity) ? severity : 'naturalness') as 'meaning' | 'naturalness' | 'minor',
-      }
-    }).filter((item) => item.original && latestUser.includes(item.original) && item.improved && item.improved !== item.original),
+    corrections,
   }
 }
 
@@ -491,7 +501,7 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
     temperature: 0,
     attempts: 2,
     maxOutputTokens: provider.maxOutputTokens,
-    retryHint: 'Return the complete language-and-lookup analysis JSON. Recheck the latest learner message for guessable spelling or word-choice errors and every information need. Keep explanations concise.',
+    retryHint: 'Return the complete language-and-lookup analysis JSON. reconstruction must be an object with type, original, improved, and explanation, never a plain string. Recheck the latest learner message for guessable spelling or word-choice errors and every information need. Keep explanations concise.',
     normalize: (value) => normalizeTurnAnalysis(value, latestUser),
     usable: (value) => Boolean(
       value.lookup.parts.length > 0 &&

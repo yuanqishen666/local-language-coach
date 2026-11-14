@@ -21,3 +21,25 @@ test('configured providers require a model and accept separate model profiles', 
   }
   assert.doesNotThrow(() => validateConfig(config))
 })
+
+test('stored provider certifications remain loadable across contract upgrades', () => {
+  const config = structuredClone(defaultConfig)
+  const provider = config.providers.find((item) => item.id === 'deepseek')!
+  provider.enabled = true
+  provider.model = 'deepseek-chat'
+  provider.capability = {
+    outputMode: 'json_object',
+    conversationReady: true,
+    lookupReady: true,
+    baseUrl: provider.baseUrl,
+    model: provider.model,
+    contractVersion: 6,
+    testedAt: new Date().toISOString(),
+  }
+
+  assert.doesNotThrow(() => validateConfig(config))
+  provider.capability.contractVersion = 7
+  assert.doesNotThrow(() => validateConfig(config))
+  provider.capability.contractVersion = 0
+  assert.throws(() => validateConfig(config), /Provider capability is stale or invalid/)
+})

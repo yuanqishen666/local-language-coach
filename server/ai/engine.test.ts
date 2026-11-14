@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { naturalReplyIssues, normalizeMemoryAnalysis, normalizeTurnAnalysis } from './engine.js'
+import { z } from 'zod'
+import { generateStructured, naturalReplyIssues, normalizeMemoryAnalysis, normalizeTurnAnalysis } from './engine.js'
+import { ProviderRequestError } from './provider.js'
 
 test('turn analysis keeps only feedback and facts grounded in the latest message', () => {
   const normalized = normalizeTurnAnalysis({
@@ -40,6 +42,87 @@ test('turn analysis keeps only feedback and facts grounded in the latest message
   assert.deepEqual(memory.relevantMemoryKeys, ['海边偏好'])
   assert.equal(memory.dialoguePlan.anchorQuote, 'i like seasite')
   assert.equal(memory.dialoguePlan.callbackMemoryKey, '')
+})
+
+test('turn analysis normalizes a provider string reconstruction instead of failing the turn', () => {
+  const latestUser = 'emmm，随着 AI 的发展，软件工程师已经变成写文档给 AI，让 AI 来写代码。'
+  const normalized = normalizeTurnAnalysis({
+    lookup: {
+      action: 'reply',
+      parts: [{ text: 'AI 改变软件工程师的工作方式', needsLookup: false, reason: 'stable', subject: 'AI-assisted software development' }],
+      query: '',
+      locator: null,
+    },
+    reconstruction: 'With the development of AI, software engineers now write specifications for AI and let it write the code.',
+    corrections: [{ original: '随着 AI 的发展', improved: 'With the development of AI', explanation: '把中文意思自然地接成英文。', severity: 'naturalness' }],
+  }, latestUser)
+
+  assert.deepEqual(normalized.reconstruction, {
+    type: 'completion',
+    original: latestUser,
+    improved: 'With the development of AI, software engineers now write specifications for AI and let it write the code.',
+    explanation: '把中文意思自然地接成英文。',
+  })
+})
+
+test('turn analysis does not reinterpret unrelated fields as reconstruction', () => {
+  const normalized = normalizeTurnAnalysis({
+    lookup: {
+      action: 'reply',
+      parts: [{ text: 'learner intent', needsLookup: false, reason: 'stable', subject: 'intent' }],
+      query: '',
+      locator: null,
+    },
+    translation: 'This field belongs to another contract.',
+    reconstructedSentence: 'This alias was never observed from a configured provider.',
+    reconstruction: null,
+    corrections: [],
+  }, 'latest message')
+
+  assert.equal(normalized.reconstruction, null)
+
+  const existingObjectBehavior = normalizeTurnAnalysis({
+    lookup: {
+      action: 'reply',
+      parts: [{ text: 'learner intent', needsLookup: false, reason: 'stable', subject: 'intent' }],
+      query: '',
+      locator: null,
+    },
+    reconstruction: { improved: 'A corrected sentence.' },
+    corrections: [],
+  }, 'latest message')
+  assert.deepEqual(existingObjectBehavior.reconstruction, {
+    type: 'correction',
+    original: '',
+    improved: 'A corrected sentence.',
+    explanation: '',
+  })
+})
+
+test('an invalid structured stage retries and then reports the error instead of silently degrading', async () => {
+  let calls = 0
+  const client = {
+    id: 'test',
+    outputMode: 'prompt_json' as const,
+    async generate() {
+      calls += 1
+      return '{"value":""}'
+    },
+  }
+
+  await assert.rejects(
+    generateStructured(client, [], {
+      name: 'required_value',
+      schema: z.object({ value: z.string().min(1) }),
+      hint: '{"value":"required"}',
+      temperature: 0,
+      attempts: 2,
+      normalize: (value) => value as { value: string },
+      usable: () => true,
+    }),
+    (error: unknown) => error instanceof ProviderRequestError && error.code === 'PROVIDER_INVALID_RESPONSE',
+  )
+  assert.equal(calls, 2)
 })
 
 test('sensitive memories can be promoted to the always-injected core tier', () => {
