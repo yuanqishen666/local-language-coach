@@ -278,4 +278,8 @@ When reporting a problem, include your operating system, Node.js version, provid
 
 ## License
 
-[MIT](./LICENSE)
+This project is source-available under the [Personal Learning Use License 1.0](./LICENSE).
+
+You may view, download, run, and modify the code only for your own personal, non-commercial learning and experimentation. Commercial or organizational use, paid services, resale, sublicensing, commercial product integration, and hosting for third parties are prohibited.
+
+This is not an OSI-approved open-source license. Any use outside these terms requires prior written permission from the copyright holder.

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A local-first, open-source conversation practice app for adult language learners.",
+  "description": "A local-first, source-available conversation practice app for adult language learners.",
   "engines": {
     "node": ">=22.13.0"
   },
