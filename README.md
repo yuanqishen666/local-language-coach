@@ -135,7 +135,7 @@ Replies address the current thread first. When a correction is useful, it stays 
 
 If something may be useful in a later conversation, Yujian asks before saving it. Unapproved details do not enter memory. Saved items can be reviewed, edited, deleted, or made core at any time.
 
-![Conversation with lightweight corrections and controlled memory](./assets/readme/en/conversation.png)
+![Conversation with lightweight corrections and controlled memory](./assets/readme/zh/conversation.png)
 
 ![Memories](./assets/readme/en/memories.png)
 
