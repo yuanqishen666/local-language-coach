@@ -83,6 +83,7 @@ export interface CoachingResponse {
   memoryCandidates: Array<{
     category: 'personal' | 'learning' | 'scene'
     key: string
+    semanticSlot: string
     value: string
     confidence: number
     sensitive: boolean
@@ -162,6 +163,7 @@ export interface TopicMomentum {
 
 export interface MemoryFact {
   key: string
+  semanticSlot?: string
   value: string
   quote: string
   sensitive: boolean

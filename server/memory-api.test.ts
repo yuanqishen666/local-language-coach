@@ -49,11 +49,37 @@ test('legacy memories migrate without data loss', async () => {
   assert.equal(memory.interfaceLocale, '')
   assert.equal(memory.lastMentionedAt, null)
   assert.equal(memory.mentionCount, 0)
+  assert.equal(memory.semanticSlot, 'profile.preferred-name')
 
   const exported = await app.inject({ method: 'GET', url: '/api/export' })
   const episode = exported.json().episodes.find((item: { id: string }) => item.id === 'legacy-episode')
   assert.equal(episode.topic_arcs_json, '[]')
   assert.equal(episode.interaction_signals_json, '[]')
+})
+
+test('a localized key with the same semantic slot updates one memory instead of creating a duplicate', async () => {
+  let response = await app.inject({
+    method: 'POST',
+    url: '/api/memories',
+    payload: { category: 'personal', key: '职业', semanticSlot: 'profile.occupation', value: '软件工程师', memoryType: 'profile', topic: 'work' },
+  })
+  assert.equal(response.statusCode, 200)
+  assert.equal(response.json().action, 'create')
+  const id = response.json().id as string
+
+  response = await app.inject({
+    method: 'POST',
+    url: '/api/memories',
+    payload: { category: 'personal', key: 'occupation', semanticSlot: 'profile.occupation', value: 'product manager', memoryType: 'profile', topic: 'work' },
+  })
+  assert.equal(response.statusCode, 200)
+  assert.equal(response.json().action, 'update')
+  assert.equal(response.json().id, id)
+
+  response = await app.inject({ method: 'GET', url: '/api/memories' })
+  const matching = response.json().filter((item: { semanticSlot: string }) => item.semanticSlot === 'profile.occupation')
+  assert.equal(matching.length, 1)
+  assert.equal(matching[0].value, 'product manager')
 })
 
 test('memory updates preserve revisions and core tier', async () => {

@@ -49,6 +49,11 @@ test('distinguishes long Latin-script explanations', () => {
   assert.equal(matchesExpectedLanguage(samples['it-IT'], 'pt-BR'), false)
 })
 
+test('keeps a natural English recommendation despite borrowed place and food terms', () => {
+  const recommendation = "On the meal side, since you're allergic to shellfish, I'd steer you toward grilled fish, chicken, or veggie dishes at places that keep seafood prep separate, and I'd mention the allergy clearly to the kitchen, since cross-contact is the real risk."
+  assert.equal(matchesExpectedConversationLanguage(recommendation, 'en-US'), true)
+})
+
 test('rejects short explanations written in another Latin language', () => {
   assert.equal(matchesExpectedLanguage('friendly chat', 'es-419'), false)
   assert.equal(matchesExpectedLanguage('house', 'es-419'), false)
@@ -63,4 +68,14 @@ test('allows natural one-word dialogue without weakening explanation checks', ()
   assert.equal(matchesExpectedConversationLanguage('Gracias', 'es'), true)
   assert.equal(matchesExpectedConversationLanguage('Thanks', 'es'), false)
   assert.equal(matchesExpectedLanguage('Gerne', 'de-DE'), false)
+})
+
+test('accepts localized short memory phrases and rejects leaked English labels', () => {
+  assert.equal(matchesExpectedConversationLanguage('Softwareingenieur', 'de-DE'), true)
+  assert.equal(matchesExpectedConversationLanguage('Softwareentwickler', 'de-DE'), true)
+  assert.equal(matchesExpectedConversationLanguage('preferisce spiagge tranquille', 'it-IT'), true)
+  assert.equal(matchesExpectedConversationLanguage('prefere praias tranquilas', 'pt-BR'), true)
+  assert.equal(matchesExpectedConversationLanguage('software engineer', 'it-IT'), false)
+  assert.equal(matchesExpectedConversationLanguage('profession', 'hi-IN'), false)
+  assert.equal(matchesExpectedConversationLanguage('पेशा', 'hi-IN'), true)
 })

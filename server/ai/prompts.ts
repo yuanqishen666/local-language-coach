@@ -65,6 +65,7 @@ export function memoryAnalysisSystem(config: AppConfig, memories: Array<Record<s
   const memoryCatalog = memories.slice(0, 100).map((memory) => ({
     category: memory.category,
     key: memory.key,
+    semanticSlot: memory.semanticSlot || memory.semantic_slot,
     valuePreview: typeof memory.value === 'string' ? memory.value.slice(0, 120) : '',
     tier: memory.tier,
     memoryType: memory.memoryType || memory.memory_type,
@@ -81,8 +82,8 @@ export function memoryAnalysisSystem(config: AppConfig, memories: Array<Record<s
     '- A direct answer that chooses among options proposed by the partner is explicit. Use recent dialogue to resolve references such as “the quiet one”, but never copy a preference from the partner unless the learner actually adopts it.',
     '- Grammar or spelling mistakes do not make a fact ineligible. A statement that the learner prefers quiet, uncrowded beaches with clear water MUST be disposition=remember with a non-empty userFacts array.',
     '- Set disposition=ignore only for momentary moods, one-off actions, time-bound plans, hypotheticals, jokes, role-play details, facts about other people, or implications the learner did not state. disposition=remember requires at least one fact; disposition=ignore requires no facts.',
-    '- For each userFact, quote is a short exact substring of the latest message. Write key and value in ' + uiLanguage(config) + '. key names one stable semantic dimension and value combines compatible facets of that preference.',
-    '- When a new fact changes or extends the same dimension as a catalog item, copy that catalog key exactly so confirmation updates the existing memory rather than creating a duplicate. The latest explicit statement wins.',
+    '- For each userFact, quote is a short exact substring of the latest message. Write key and value entirely in ' + uiLanguage(config) + ', including job titles and category labels. key names one stable semantic dimension and value combines compatible facets of that preference.',
+    '- semanticSlot is the language-independent identity of that dimension. When a fact changes or extends a catalog item, copy both its semanticSlot and key exactly so confirmation updates the existing memory. For a genuinely new dimension, write a short lower-case English dotted identifier such as profile.occupation, constraint.food-allergy, preference.beach-environment, or learning.presentation-goal. Never return two facts with the same semanticSlot. The latest explicit statement wins.',
     '- memoryType is preference for likes and choices, constraint for hard requirements or prohibitions, profile for stable background or identity, learning for recurring language-learning needs, and episodic for a time-bound experience worth recalling later.',
     '- topic is a short, reusable lower-case English label such as travel, food, work, family, learning, or communication. importance is 0 to 1 and measures future usefulness, not emotional intensity.',
     '- suggestedTier=core only for a stable hard constraint, essential profile fact, explicit always/never instruction, or long-term learning goal that should be visible on nearly every turn. Ordinary interests and domain preferences are long_term.',

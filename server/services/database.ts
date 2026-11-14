@@ -69,6 +69,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     category TEXT NOT NULL,
     key TEXT NOT NULL,
+    semantic_slot TEXT NOT NULL DEFAULT '',
     value TEXT NOT NULL,
     interface_locale TEXT NOT NULL DEFAULT '',
     localized_values_json TEXT NOT NULL DEFAULT '{}',
@@ -143,6 +144,7 @@ ensureTableColumn('conversation_episodes', 'interaction_signals_json', "TEXT NOT
 ensureTableColumn('word_entries', 'interface_locale', "TEXT NOT NULL DEFAULT ''")
 ensureTableColumn('memories', 'interface_locale', "TEXT NOT NULL DEFAULT ''")
 ensureTableColumn('memories', 'localized_values_json', "TEXT NOT NULL DEFAULT '{}'")
+ensureTableColumn('memories', 'semantic_slot', "TEXT NOT NULL DEFAULT ''")
 ensureTableColumn('memories', 'tier', "TEXT NOT NULL DEFAULT 'long_term'")
 ensureTableColumn('memories', 'memory_type', "TEXT NOT NULL DEFAULT 'preference'")
 ensureTableColumn('memories', 'topic', "TEXT NOT NULL DEFAULT 'general'")
@@ -171,6 +173,7 @@ db.exec('CREATE INDEX IF NOT EXISTS conversation_episodes_conversation_index ON 
 db.exec('CREATE INDEX IF NOT EXISTS web_lookup_cache_expiry_index ON web_lookup_cache(expires_at)')
 db.exec('DROP INDEX IF EXISTS memories_retrieval_index')
 db.exec('CREATE INDEX memories_retrieval_index ON memories(status, tier, topic, updated_at DESC)')
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS memories_semantic_slot_unique ON memories(semantic_slot) WHERE semantic_slot <> ''")
 db.exec('CREATE INDEX IF NOT EXISTS memory_revisions_memory_index ON memory_revisions(memory_id, created_at DESC)')
 export function rows<T>(statement: string, ...params: any[]): T[] {
   return db.prepare(statement).all(...params) as T[]

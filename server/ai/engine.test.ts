@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { z } from 'zod'
-import { generateStructured, naturalReplyIssues, normalizeMemoryAnalysis, normalizeTurnAnalysis } from './engine.js'
+import { explicitMemoryClauses, generateStructured, naturalReplyIssues, normalizeMemoryAnalysis, normalizeTurnAnalysis } from './engine.js'
 import { ProviderRequestError } from './provider.js'
 
 test('turn analysis keeps only feedback and facts grounded in the latest message', () => {
@@ -141,6 +141,39 @@ test('sensitive memories can be promoted to the always-injected core tier', () =
   }, 'I have a health condition', [])
 
   assert.equal(memory.userFacts[0].suggestedTier, 'core')
+})
+
+test('memory analysis keeps only the latest fact for one semantic slot', () => {
+  const latestUser = 'I used to be a developer, but now I am a product manager.'
+  const normalized = normalizeMemoryAnalysis({
+    disposition: 'remember',
+    userFacts: [
+      { key: '职业', semanticSlot: 'profile.occupation', value: '软件工程师', quote: 'developer', sensitive: false, memoryType: 'profile', topic: 'work', importance: 0.7, suggestedTier: 'long_term' },
+      { key: '职业', semanticSlot: 'profile.occupation', value: '产品经理', quote: 'product manager', sensitive: false, memoryType: 'profile', topic: 'work', importance: 0.7, suggestedTier: 'long_term' },
+    ],
+    replyType: 'casual', relevantTopics: ['work'], relevantMemoryKeys: [],
+    dialoguePlan: {
+      mode: 'casual', anchorQuote: 'product manager', anchorMeaning: 'The user changed jobs.', move: 'react', topic: 'work', branch: '', contribution: 'Acknowledge the change.',
+      questionPolicy: 'none', questionPurpose: '', previousMoveOutcome: 'none', callbackMemoryKey: '', reopenBranch: false,
+    },
+  }, latestUser, [])
+
+  assert.equal(normalized.userFacts.length, 1)
+  assert.equal(normalized.userFacts[0].value, '产品经理')
+})
+
+test('explicit durable clauses are counted separately for extraction coverage', () => {
+  assert.deepEqual(explicitMemoryClauses("I'm a software engineer. I'm allergic to shellfish. I prefer quiet beaches."), [
+    "I'm a software engineer.",
+    "I'm allergic to shellfish.",
+    'I prefer quiet beaches.',
+  ])
+  assert.deepEqual(explicitMemoryClauses('I am tired today. The weather is nice.'), [])
+  assert.deepEqual(explicitMemoryClauses('我是一名工程师。我对贝类过敏。我喜欢安静的海边。'), [
+    '我是一名工程师。',
+    '我对贝类过敏。',
+    '我喜欢安静的海边。',
+  ])
 })
 
 test('reply validation enforces the local question budget', () => {

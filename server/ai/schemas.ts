@@ -59,6 +59,7 @@ export const memoryAnalysisSchema = z.object({
   disposition: z.enum(['remember', 'ignore']),
   userFacts: z.array(z.object({
     key: z.string(),
+    semanticSlot: z.string(),
     value: z.string(),
     quote: z.string(),
     sensitive: z.boolean(),

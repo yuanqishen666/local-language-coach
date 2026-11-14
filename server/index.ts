@@ -18,6 +18,10 @@ import type { ProviderTestOverrides } from './ai/provider.js'
 import { emptyConversationState, extractiveEpisodeFallback, mergeConversationState, normalizeConversationSetup, normalizeConversationState, type StoredConversationMessage } from './ai/context.js'
 import { supportsProviderLookup } from './lookup/provider-tools.js'
 import { normalizeUiLocale } from '../shared/locales.js'
+import { filterConfirmedMemoryCandidates, memorySemanticSlot, normalizeMemorySemanticSlot } from './memory-candidates.js'
+import { localizedMemoryForInterface } from './memory-localization.js'
+import { memoryCategoryForType, tierForExtractedFact } from './memory-policy.js'
+import { visibleConversationMessages } from './conversation-messages.js'
 
 const config = await getConfig()
 const logLevel = process.env.LLC_LOG_LEVEL || (process.env.NODE_ENV === 'test' ? 'silent' : process.env.NODE_ENV === 'production' ? 'warn' : 'info')
@@ -300,8 +304,21 @@ function feedbackLocalizationItems(meta: Record<string, any>, messageId: string)
 }
 
 async function messagesForInterface(conversationId: string, interfaceLocale: string) {
-  const messages: Array<Record<string, any>> = rows<Record<string, any>>('SELECT id, role, content, status, client_message_id AS clientMessageId, meta_json AS metaJson, created_at AS createdAt FROM messages WHERE conversation_id = ? ORDER BY created_at', conversationId)
+  const messages: Array<Record<string, any>> = visibleConversationMessages(rows<Record<string, any>>('SELECT id, role, content, status, client_message_id AS clientMessageId, meta_json AS metaJson, created_at AS createdAt FROM messages WHERE conversation_id = ? ORDER BY created_at', conversationId)
     .map((message) => ({ ...message, meta: safeJson<Record<string, any>>(message.metaJson, {}) }) as Record<string, any>)
+  )
+  const confirmedMemories = rows<Record<string, any>>(`SELECT category, key, semantic_slot AS semanticSlot, value, status,
+    localized_values_json AS localizedValuesJson, memory_type AS memoryType, topic,
+    source_message_id AS sourceMessageId
+    FROM memories WHERE status = 'confirmed' AND (valid_to IS NULL OR valid_to > ?)`, new Date().toISOString())
+  for (const message of messages) {
+    const candidates = Array.isArray(message.meta.memoryCandidates) ? message.meta.memoryCandidates : []
+    const filtered = filterConfirmedMemoryCandidates(candidates, confirmedMemories)
+    if (filtered.length === candidates.length) continue
+    message.meta.memoryCandidates = filtered
+    delete message.meta.feedbackLocalizations
+    db.prepare('UPDATE messages SET meta_json = ? WHERE id = ?').run(JSON.stringify(message.meta), message.id)
+  }
   const missing: Array<{ message: Record<string, any>; items: Array<{ id: string; value: string }> }> = []
 
   for (const message of messages) {
@@ -417,6 +434,13 @@ app.get<{ Querystring: { interfaceLocale?: string } }>('/api/conversations', asy
   c.interface_locale AS interfaceLocale, c.localized_setups_json AS localizedSetupsJson,
   c.created_at AS createdAt, c.updated_at AS updatedAt
   FROM conversations c
+  WHERE EXISTS (
+    SELECT 1
+    FROM messages recorded
+    WHERE recorded.conversation_id = c.id
+      AND recorded.role = 'user'
+      AND TRIM(recorded.content) <> ''
+  )
   ORDER BY c.updated_at DESC`).map((item) => {
     if (item.kind !== 'scene' || item.interfaceLocale === interfaceLocale) {
       const { localizedSetupsJson: _localized, ...publicItem } = item
@@ -545,7 +569,7 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
     const setup = setupForConversation(conversation)
     const initialState = normalizeConversationState(safeJson(conversation.state_json, null), setup)
     const compacted = await compactOlderMessages(request.params.id, messageRows, initialState, interfaceLocale)
-    const storedMemories = rows<Record<string, any>>(`SELECT id, category, key, value, tier,
+    const storedMemories = rows<Record<string, any>>(`SELECT id, category, key, semantic_slot AS semanticSlot, value, tier,
       interface_locale AS interfaceLocale, localized_values_json AS localizedValuesJson,
       memory_type AS memoryType, topic, importance, pinned, confidence, sensitive, status,
       source_conversation_id AS sourceConversationId, source_message_id AS sourceMessageId,
@@ -555,9 +579,7 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
       WHERE status = ? AND (valid_to IS NULL OR valid_to > ?)
       ORDER BY CASE WHEN tier = 'core' THEN 0 ELSE 1 END, pinned DESC, importance DESC, updated_at DESC`, 'confirmed', now)
     await ensureMemoryLocalizations(storedMemories, interfaceLocale).catch(() => undefined)
-    const memories = storedMemories
-      .map((memory) => memoryForInterface(memory, interfaceLocale))
-      .filter((memory): memory is Record<string, any> => Boolean(memory))
+    const memories = storedMemories.map((memory) => memoryForInterface(memory, interfaceLocale))
     let turn
     try {
       turn = await coachTurn({
@@ -588,28 +610,30 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
         memoryIds: turn.context.memoryIds,
       },
     })
-    result.memoryCandidates = merged.userFacts.map((fact) => {
-      const existingMemory = memories.find((memory) => memory.key === fact.key)
+    result.memoryCandidates = filterConfirmedMemoryCandidates(merged.userFacts.map((fact) => {
+      const semanticSlot = normalizeMemorySemanticSlot(fact.semanticSlot)
+      const existingMemory = memories.find((memory) =>
+        (semanticSlot && memorySemanticSlot(memory) === semanticSlot) || memory.key === fact.key)
       const memoryType = fact.memoryType || 'profile'
       const category = existingMemory?.category === 'learning' || existingMemory?.category === 'scene' || existingMemory?.category === 'personal'
         ? existingMemory.category
-        : memoryType === 'learning' ? 'learning' : memoryType === 'episodic' ? 'scene' : 'personal'
-      const suggestedTier = fact.suggestedTier || 'long_term'
+        : memoryCategoryForType(memoryType)
       return {
         category: category as 'personal' | 'learning' | 'scene',
         key: fact.key,
+        semanticSlot,
         value: fact.value,
         confidence: 1,
         sensitive: fact.sensitive,
         action: existingMemory ? 'update' as const : 'create' as const,
-        tier: existingMemory?.tier === 'core' ? 'core' as const : suggestedTier,
+        tier: tierForExtractedFact(fact, existingMemory?.tier),
         memoryType,
         topic: fact.topic || 'general',
         importance: Math.max(0, Math.min(1, fact.importance ?? 0.5)),
         sourceMessageId: userId,
         ...(existingMemory ? { previousValue: String(existingMemory.value || '') } : {}),
       }
-    })
+    }), storedMemories)
     db.exec('BEGIN IMMEDIATE')
     try {
       db.prepare('INSERT INTO messages (id, conversation_id, role, content, meta_json, reply_to_message_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(assistantId, request.params.id, 'assistant', result.roleReply, JSON.stringify(result), userId, 'complete', replyAt)
@@ -794,10 +818,9 @@ function addMemoryRevision(memoryId: string, previousValue: string | null, nextV
   )
 }
 
-function memoryForInterface(memory: Record<string, any>, interfaceLocale: string) {
-  if (memory.interfaceLocale === interfaceLocale) return memory
-  const localized = safeJson<Record<string, string>>(memory.localizedValuesJson, {})[interfaceLocale]
-  return localized ? { ...memory, value: localized, interfaceLocale } : null
+function memoryForInterface(memory: Record<string, any>, interfaceLocale: string): Record<string, any> {
+  const localized = localizedMemoryForInterface(memory, interfaceLocale)
+  return { ...localized, semanticSlot: memorySemanticSlot(localized) }
 }
 
 async function ensureMemoryLocalizations(stored: Array<Record<string, any>>, interfaceLocale: string) {
@@ -823,7 +846,7 @@ async function ensureMemoryLocalizations(stored: Array<Record<string, any>>, int
   }
 }
 
-app.get('/api/memories', async () => rows<Record<string, any>>(`SELECT id, category, key, value, tier,
+app.get('/api/memories', async () => rows<Record<string, any>>(`SELECT id, category, key, semantic_slot AS semanticSlot, value, tier,
   interface_locale AS interfaceLocale, localized_values_json AS localizedValuesJson, memory_type AS memoryType, topic, importance, pinned, confidence, sensitive, status,
   source_conversation_id AS sourceConversationId, source_message_id AS sourceMessageId,
   supersedes_id AS supersedesId, valid_from AS validFrom, valid_to AS validTo,
@@ -832,20 +855,28 @@ app.get('/api/memories', async () => rows<Record<string, any>>(`SELECT id, categ
   FROM memories
   ORDER BY CASE WHEN tier = 'core' THEN 0 ELSE 1 END, pinned DESC, importance DESC, updated_at DESC`).map((memory) => ({
     ...memory,
+    semanticSlot: memorySemanticSlot(memory),
     pinned: Boolean(memory.pinned),
     sensitive: Boolean(memory.sensitive),
   })))
 
 app.post<{ Body: {
   category: string; key: string; value: string; confidence?: number; sensitive?: boolean; status?: string
-  sourceConversationId?: string; sourceMessageId?: string; tier?: 'core' | 'long_term'; memoryType?: string; topic?: string; importance?: number; interfaceLocale?: string
+  sourceConversationId?: string; sourceMessageId?: string; tier?: 'core' | 'long_term'; memoryType?: string; topic?: string; importance?: number; interfaceLocale?: string; semanticSlot?: string
 } }>('/api/memories', async (request) => {
   const body = request.body
   const category = memoryCategories.has(body.category) ? body.category : 'personal'
   const key = body.key?.trim()
   const value = body.value?.trim()
   if (!key || !value) throw Object.assign(new Error('Memory key and value are required.'), { statusCode: 400 })
-  const existing = row<Record<string, any>>('SELECT * FROM memories WHERE category = ? AND key = ?', category, key)
+  const requestedSemanticSlot = normalizeMemorySemanticSlot(body.semanticSlot)
+  let existing = row<Record<string, any>>('SELECT * FROM memories WHERE category = ? AND key = ?', category, key)
+  if (!existing && requestedSemanticSlot) {
+    existing = rows<Record<string, any>>('SELECT * FROM memories')
+      .find((memory) => memorySemanticSlot(memory) === requestedSemanticSlot)
+  }
+  const semanticSlot = requestedSemanticSlot || normalizeMemorySemanticSlot(existing?.semantic_slot) ||
+    memorySemanticSlot({ category, key })
   const sensitive = body.sensitive === undefined ? Boolean(existing?.sensitive) : Boolean(body.sensitive)
   const requestedTier = body.tier || existing?.tier || 'long_term'
   const tier = requestedTier === 'core' ? 'core' : 'long_term'
@@ -868,17 +899,17 @@ app.post<{ Body: {
   try {
     if (existing) {
       addMemoryRevision(id, existing.value, value, existing.value === value ? 'metadata' : 'update', sourceConversationId, sourceMessageId)
-      db.prepare(`UPDATE memories SET value = ?, interface_locale = ?, localized_values_json = '{}', tier = ?, memory_type = ?, topic = ?, importance = ?, pinned = ?, confidence = ?, sensitive = ?,
+      db.prepare(`UPDATE memories SET value = ?, semantic_slot = ?, interface_locale = ?, localized_values_json = '{}', tier = ?, memory_type = ?, topic = ?, importance = ?, pinned = ?, confidence = ?, sensitive = ?,
         status = ?, source_conversation_id = ?, source_message_id = ?, valid_to = NULL, updated_at = ? WHERE id = ?`).run(
-        value, interfaceLocale, tier, memoryType, topic, importance, tier === 'core' ? existing.pinned : 0, confidence, sensitive ? 1 : 0,
+        value, semanticSlot, interfaceLocale, tier, memoryType, topic, importance, tier === 'core' ? existing.pinned : 0, confidence, sensitive ? 1 : 0,
         status, sourceConversationId, sourceMessageId, now, id,
       )
     } else {
       db.prepare(`INSERT INTO memories
-        (id, category, key, value, interface_locale, localized_values_json, tier, memory_type, topic, importance, pinned, confidence, sensitive, status,
+        (id, category, key, semantic_slot, value, interface_locale, localized_values_json, tier, memory_type, topic, importance, pinned, confidence, sensitive, status,
           source_conversation_id, source_message_id, valid_from, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        id, category, key, value, interfaceLocale, tier, memoryType, topic, importance, confidence,
+        VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        id, category, key, semanticSlot, value, interfaceLocale, tier, memoryType, topic, importance, confidence,
         sensitive ? 1 : 0, status, sourceConversationId, sourceMessageId, now, now, now,
       )
       addMemoryRevision(id, null, value, 'create', sourceConversationId, sourceMessageId)
@@ -894,7 +925,7 @@ app.post<{ Body: {
 app.post<{ Body: { interfaceLocale?: string } }>('/api/memories/localize', async (request) => {
   const current = await getConfig()
   const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
-  const stored = rows<Record<string, any>>(`SELECT id, category, key, value, tier,
+  const stored = rows<Record<string, any>>(`SELECT id, category, key, semantic_slot AS semanticSlot, value, tier,
     interface_locale AS interfaceLocale, localized_values_json AS localizedValuesJson, memory_type AS memoryType, topic, importance, pinned, confidence, sensitive, status,
     source_conversation_id AS sourceConversationId, source_message_id AS sourceMessageId,
     last_used_at AS lastUsedAt, use_count AS useCount, last_mentioned_at AS lastMentionedAt,
@@ -902,9 +933,7 @@ app.post<{ Body: { interfaceLocale?: string } }>('/api/memories/localize', async
     FROM memories ORDER BY CASE WHEN tier = 'core' THEN 0 ELSE 1 END, pinned DESC, importance DESC, updated_at DESC`)
   await ensureMemoryLocalizations(stored, interfaceLocale)
   return stored.map((memory) => {
-    if (memory.interfaceLocale === interfaceLocale) return memory
-    const localized = safeJson<Record<string, string>>(memory.localizedValuesJson, {})[interfaceLocale]
-    return localized ? { ...memory, value: localized, interfaceLocale } : memory
+    return memoryForInterface(memory, interfaceLocale)
   })
 })
 

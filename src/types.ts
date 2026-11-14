@@ -85,11 +85,12 @@ export interface MessageMeta {
     openedLoops: string[]
     resolvedLoops: string[]
     sceneFacts: string[]
-    userFacts: Array<{ key: string; value: string; quote: string; sensitive: boolean; memoryType?: string; topic?: string; importance?: number; suggestedTier?: 'core' | 'long_term' }>
+    userFacts: Array<{ key: string; semanticSlot?: string; value: string; quote: string; sensitive: boolean; memoryType?: string; topic?: string; importance?: number; suggestedTier?: 'core' | 'long_term' }>
   }
   memoryCandidates?: Array<{
     category: string
     key: string
+    semanticSlot: string
     value: string
     confidence: number
     sensitive: boolean

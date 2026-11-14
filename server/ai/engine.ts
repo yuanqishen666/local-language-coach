@@ -19,6 +19,7 @@ import {
 import { runLookup } from '../lookup/router.js'
 import { matchesExpectedConversationLanguage, matchesExpectedLanguage } from './language.js'
 import { deriveDialoguePolicy, dialoguePolicyIssues, hasQuestion, isQuestionOnly, openerSimilarity } from './dialogue-policy.js'
+import { normalizeMemorySemanticSlot } from '../memory-candidates.js'
 
 const repairableOutputCodes = new Set(['PROVIDER_EMPTY_RESPONSE', 'PROVIDER_INVALID_RESPONSE'])
 
@@ -77,7 +78,7 @@ interface StructuredTask<T extends z.ZodType> {
   schema: T
   hint: string
   temperature: number
-  attempts?: 1 | 2
+  attempts?: 1 | 2 | 3
   retryHint?: string
   maxOutputTokens?: number
   normalize: (value: unknown) => z.input<T>
@@ -257,28 +258,64 @@ export function normalizeMemoryAnalysis(value: unknown, latestUser: string, memo
     callbackMemoryKey,
     reopenBranch: Boolean(planSource.reopenBranch),
   }
+  const normalizedFacts = (Array.isArray(source.userFacts) ? source.userFacts : []).map((item) => {
+    const fact = record(item)
+    const memoryType = text(fact.memoryType)
+    const normalizedMemoryType = (['preference', 'constraint', 'profile', 'learning', 'episodic'].includes(memoryType) ? memoryType : 'profile') as 'preference' | 'constraint' | 'profile' | 'learning' | 'episodic'
+    const topic = text(fact.topic, 'general').toLocaleLowerCase().slice(0, 40)
+    const key = text(fact.key)
+    const semanticSlot = normalizeMemorySemanticSlot(fact.semanticSlot) ||
+      normalizeMemorySemanticSlot(`new:${normalizedMemoryType}:${topic}:${key}`)
+    return {
+      key,
+      semanticSlot,
+      value: text(fact.value),
+      quote: text(fact.quote),
+      sensitive: Boolean(fact.sensitive),
+      memoryType: normalizedMemoryType,
+      topic,
+      importance: Math.max(0, Math.min(1, Number(fact.importance) || 0.5)),
+      suggestedTier: (text(fact.suggestedTier) === 'core' ? 'core' : 'long_term') as 'core' | 'long_term',
+    }
+  }).filter((item) => item.key && item.semanticSlot && item.value && item.quote && latestUser.includes(item.quote))
+  const factsBySlot = new Map<string, typeof normalizedFacts[number]>()
+  for (const fact of normalizedFacts) factsBySlot.set(fact.semanticSlot, fact)
   return {
     disposition: text(source.disposition) === 'remember' ? 'remember' as const : 'ignore' as const,
-    userFacts: (Array.isArray(source.userFacts) ? source.userFacts : []).map((item) => {
-      const fact = record(item)
-      const memoryType = text(fact.memoryType)
-      const sensitive = Boolean(fact.sensitive)
-      return {
-        key: text(fact.key),
-        value: text(fact.value),
-        quote: text(fact.quote),
-        sensitive,
-        memoryType: (['preference', 'constraint', 'profile', 'learning', 'episodic'].includes(memoryType) ? memoryType : 'profile') as 'preference' | 'constraint' | 'profile' | 'learning' | 'episodic',
-        topic: text(fact.topic, 'general').toLocaleLowerCase().slice(0, 40),
-        importance: Math.max(0, Math.min(1, Number(fact.importance) || 0.5)),
-        suggestedTier: (text(fact.suggestedTier) === 'core' ? 'core' : 'long_term') as 'core' | 'long_term',
-      }
-    }).filter((item) => item.key && item.value && item.quote && latestUser.includes(item.quote)).slice(0, 3),
+    userFacts: [...factsBySlot.values()].slice(0, 3),
     replyType: (['casual', 'recommendation', 'planning', 'learning', 'factual', 'support', 'other'].includes(replyType) ? replyType : 'other') as 'casual' | 'recommendation' | 'planning' | 'learning' | 'factual' | 'support' | 'other',
     relevantTopics: strings(source.relevantTopics).map((topic) => topic.toLocaleLowerCase().slice(0, 40)).slice(0, 8),
     relevantMemoryKeys: strings(source.relevantMemoryKeys).filter((key) => allowedMemoryKeys.has(key)).slice(0, 8),
     dialoguePlan,
   }
+}
+
+const durableClauseSignal = new RegExp([
+  String.raw`\b(?:i\s+(?:prefer|like|love|hate|dislike|always|never|work\s+as|live\s+in|want\s+to\s+practice)|i(?:'m|\s+am)\s+allergic|my\s+(?:name|job|profession|occupation|goal)\s+is|call\s+me)\b`,
+  String.raw`\b(?:i(?:'m|\s+am)\s+(?:an?\s+)?(?:software\s+)?(?:engineer|developer|manager|teacher|student|designer|doctor|nurse|lawyer|accountant|consultant|researcher|writer|artist|architect))\b`,
+  String.raw`(?:我是|我叫|我喜欢|我偏好|我讨厌|我对.+过敏|我住在|我一直|我从不|我的.+目标)`,
+  String.raw`(?:私は|僕は|わたしは|が好き|を好み|が嫌い|アレルギー|に住んで|いつも|決して)`,
+  String.raw`(?:저는|나는|제가|좋아해|선호해|싫어해|알레르기|살고|항상|절대)`,
+  String.raw`(?:prefiero|me\s+gusta|me\s+encanta|odio|al[eé]rgic|trabajo\s+como|vivo\s+en|me\s+llamo|siempre|nunca|quiero\s+practicar)`,
+  String.raw`(?:je\s+préfère|j['’]aime|je\s+déteste|allerg|je\s+travaille\s+comme|j['’]habite|je\s+m['’]appelle|toujours|jamais|je\s+veux\s+pratiquer)`,
+  String.raw`(?:ich\s+bevorzuge|ich\s+mag|ich\s+liebe|ich\s+hasse|allerg|ich\s+arbeite\s+als|ich\s+wohne|ich\s+heiße|immer|nie)`,
+  String.raw`(?:preferisco|mi\s+piace|adoro|odio|allergic|lavoro\s+come|vivo\s+a|mi\s+chiamo|sempre|mai|voglio\s+esercitarmi)`,
+  String.raw`(?:prefiro|eu\s+gosto|adoro|odeio|al[eé]rgic|trabalho\s+como|moro\s+em|me\s+chamo|sempre|nunca|quero\s+praticar)`,
+  String.raw`(?:मुझे.+पसंद|मैं.+हूँ|मेरा\s+नाम|एलर्जी|मैं.+रहता|मैं.+रहती|हमेशा|कभी\s+नहीं|अभ्यास\s+करना)`,
+].join('|'), 'iu')
+
+export function explicitMemoryClauses(latestUser: string) {
+  return latestUser.split(/(?<=[.!?。！？])|[;；\n]+/u)
+    .map((clause) => clause.trim())
+    .filter((clause) => clause && durableClauseSignal.test(clause))
+    .slice(0, 3)
+}
+
+function memoryAnalysisCoversClauses(
+  facts: Array<{ quote: string }>,
+  clauses: string[],
+) {
+  return clauses.every((clause) => facts.some((fact) => clause.includes(fact.quote) || fact.quote.includes(clause)))
 }
 
 export function naturalReplyIssues(reply: string, messages: StoredConversationMessage[], lookupUsed: boolean, dialoguePolicy?: DialoguePolicy) {
@@ -432,6 +469,7 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
   const provider = selectedProvider(config)
   const latestUser = [...input.messages].reverse().find((message) => message.role === 'user')?.content || ''
   const rescueRequired = requiresInterfaceLanguageRescue(latestUser, config.ui.locale, config.learning.targetLanguageCode)
+  const explicitDurableClauses = explicitMemoryClauses(latestUser)
   const memoryCatalog = input.memories.slice(0, 100)
   const memoryKeys = memoryCatalog.map((memory) => text(memory.key)).filter(Boolean)
   const analysisHistory = selectRecentHistory(input.messages, 1_400, 4)
@@ -444,14 +482,20 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
     ], {
       name: 'memory_analysis',
       schema: memoryAnalysisSchema,
-      hint: '{"disposition":"ignore","userFacts":[],"replyType":"casual","relevantTopics":[],"relevantMemoryKeys":[],"dialoguePlan":{"mode":"casual","anchorQuote":"latest words","anchorMeaning":"meaning","move":"react","topic":"general","branch":"","contribution":"one useful reaction","questionPolicy":"none","questionPurpose":"","previousMoveOutcome":"none","callbackMemoryKey":"","reopenBranch":false}}',
+      hint: '{"disposition":"ignore","userFacts":[{"key":"occupation","semanticSlot":"profile.occupation","value":"software engineer","quote":"exact words","sensitive":false,"memoryType":"profile","topic":"work","importance":0.7,"suggestedTier":"long_term"}],"replyType":"casual","relevantTopics":[],"relevantMemoryKeys":[],"dialoguePlan":{"mode":"casual","anchorQuote":"latest words","anchorMeaning":"meaning","move":"react","topic":"general","branch":"","contribution":"one useful reaction","questionPolicy":"none","questionPurpose":"","previousMoveOutcome":"none","callbackMemoryKey":"","reopenBranch":false}}',
       temperature: 0,
-      attempts: 2,
+      attempts: 3,
       maxOutputTokens: Math.min(provider.maxOutputTokens, 800),
-      retryHint: 'Return the complete memory and dialogue-plan JSON. anchorQuote must be copied from the latest learner message. Explicit durable likes, dislikes, preferences, recurring constraints, and personal background require disposition=remember and at least one grounded fact. Copy matching catalog keys exactly.',
-      normalize: (value) => normalizeMemoryAnalysis(value, latestUser, memoryKeys),
+      retryHint: `Return the complete memory and dialogue-plan JSON. Every userFact needs semanticSlot. Write key and value entirely in ${config.ui.locale}; translate job titles instead of leaving them in English. anchorQuote must be copied from the latest learner message. Explicit durable likes, dislikes, preferences, recurring constraints, and personal background require disposition=remember and one grounded fact for every explicit durable clause. Clauses to cover: ${JSON.stringify(explicitDurableClauses)}. Copy matching catalog semanticSlot and key exactly.`,
+      normalize: (value) => {
+        const normalized = normalizeMemoryAnalysis(value, latestUser, memoryKeys)
+        normalized.userFacts = normalized.userFacts.filter((fact) =>
+          matchesExpectedConversationLanguage(fact.key, config.ui.locale) &&
+          matchesExpectedConversationLanguage(fact.value, config.ui.locale))
+        return normalized
+      },
       usable: (value) => (value.disposition === 'remember' ? value.userFacts.length > 0 : value.userFacts.length === 0) &&
-        value.userFacts.every((fact) => matchesExpectedLanguage(fact.value, config.ui.locale)) &&
+        memoryAnalysisCoversClauses(value.userFacts, explicitDurableClauses) &&
         Boolean(value.dialoguePlan.anchorQuote && latestUser.includes(value.dialoguePlan.anchorQuote)),
     })
   } catch (error) {
@@ -499,7 +543,7 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
     schema: turnAnalysisSchema,
     hint: '{"lookup":{"action":"reply","parts":[{"text":"learner intent","needsLookup":false,"reason":"stable","subject":"exact subject"}],"query":"","locator":null},"reconstruction":null,"corrections":[]}',
     temperature: 0,
-    attempts: 2,
+    attempts: 3,
     maxOutputTokens: provider.maxOutputTokens,
     retryHint: 'Return the complete language-and-lookup analysis JSON. reconstruction must be an object with type, original, improved, and explanation, never a plain string. Recheck the latest learner message for guessable spelling or word-choice errors and every information need. Keep explanations concise.',
     normalize: (value) => normalizeTurnAnalysis(value, latestUser),
@@ -546,7 +590,7 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
         ? '{"roleReply":"natural reply","reconstruction":{"type":"completion","original":"","improved":"","explanation":""},"corrections":[],"lookup":{"action":"reply","parts":[{"text":"learner intent","needsLookup":false,"reason":"stable","subject":"exact subject"}],"query":"","locator":null},"statePatch":{"currentTopic":"","openedLoops":[],"resolvedLoops":[],"sceneFacts":[],"userFacts":[]}}'
         : '{"roleReply":"natural reply","reconstruction":null,"corrections":[],"lookup":{"action":"reply","parts":[{"text":"learner intent","needsLookup":false,"reason":"stable","subject":"exact subject"}],"query":"","locator":null},"statePatch":{"currentTopic":"","openedLoops":[],"resolvedLoops":[],"sceneFacts":[],"userFacts":[]}}',
       temperature: 0.55,
-      attempts: 2,
+      attempts: 3,
       maxOutputTokens: provider.maxOutputTokens,
       retryHint: rescueRequired
         ? 'Return every required field. reconstruction must be non-null, roleReply must directly answer the learner, and lookup.parts must contain every learner intent. Keep the response concise.'
@@ -867,7 +911,7 @@ export async function localizeInterfaceValues(items: Array<{ id: string; value: 
         new Set(value.items.map((item) => item.id)).size === expectedIds.size &&
         value.items.every((item) => {
           const original = batch.find((source) => source.id === item.id)?.value || ''
-          return matchesExpectedLanguage(item.value, config.ui.locale) ||
+          return matchesExpectedConversationLanguage(item.value, config.ui.locale) ||
             (item.value === original && languageNeutral(item.value))
         }),
     })

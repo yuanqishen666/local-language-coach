@@ -23,23 +23,28 @@ test('unrelated recent memories are not injected as context', () => {
   assert.deepEqual(selected, [])
 })
 
-test('only pinned or rule-like core memories are always present', () => {
+test('every core memory is always present, while unrelated long-term memory stays routed', () => {
   const core = { id: 'core-1', category: 'personal', key: '称呼偏好', value: '喜欢被叫作 Alex', tier: 'core', memoryType: 'profile', importance: 0.9 }
   const constraint = { id: 'core-2', category: 'personal', key: '对话约束', value: '不要连续提问', tier: 'core', memoryType: 'constraint', importance: 1 }
   const unrelated = { id: 'long-1', category: 'personal', key: '海边偏好', value: '喜欢安静海边', tier: 'long_term', topic: 'travel' }
   const selected = selectRelevantMemories([unrelated, core, constraint], 'How do I cook this pasta?', '', 4)
-  assert.deepEqual(selected, [constraint])
+  assert.deepEqual(selected, [constraint, core])
 })
 
-test('ordinary core bodies are loaded on demand and the injected set stays bounded', () => {
+test('all fifteen core memories are injected and long-term routing keeps its own bound', () => {
   const ordinaryCore = { id: 'core-profile', category: 'personal', key: '职业背景', value: '软件开发', tier: 'core', memoryType: 'profile', topic: 'work' }
-  const constraints = Array.from({ length: 10 }, (_, index) => ({
+  const constraints = Array.from({ length: 14 }, (_, index) => ({
     id: `constraint-${index}`, category: 'personal', key: `约束 ${index}`, value: `constraint ${index}`,
     tier: 'core', memoryType: 'constraint', topic: 'work', importance: 1 - index * 0.01,
   }))
-  const selected = selectRelevantMemories([ordinaryCore, ...constraints], 'Tell me about my work', '', 10, ['职业背景'], ['work'], 'casual')
+  const longTerm = Array.from({ length: 8 }, (_, index) => ({
+    id: `long-${index}`, category: 'personal', key: `工作偏好 ${index}`, value: `software preference ${index}`,
+    tier: 'long_term', memoryType: 'preference', topic: 'work', importance: 0.8,
+  }))
+  const selected = selectRelevantMemories([ordinaryCore, ...constraints, ...longTerm], 'Tell me about my work', '', 4, ['职业背景'], ['work'], 'casual')
   assert.ok(selected.includes(ordinaryCore))
-  assert.ok(selected.length <= 8)
+  assert.equal(selected.filter((memory) => memory.tier === 'core').length, 15)
+  assert.equal(selected.filter((memory) => memory.tier === 'long_term').length, 4)
 })
 
 test('reply topic is a soft routing signal for long-term memory', () => {

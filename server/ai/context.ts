@@ -224,9 +224,7 @@ export function selectRelevantMemories(
   const selectedKeys = new Set(semanticKeys.map((key) => text(key)))
   const selectedTopics = new Set(relevantTopics.map((topic) => text(topic).toLocaleLowerCase()).filter(Boolean))
   const recentlyUsed = new Set(recentMemoryIds.map((id) => text(id)).filter(Boolean))
-  const alwaysCore = memories.filter((memory) => text(memory.tier) === 'core' && (
-    Boolean(memory.pinned) || ['constraint', 'learning'].includes(text(memory.memoryType || memory.memory_type))
-  ))
+  const alwaysCore = memories.filter((memory) => text(memory.tier) === 'core')
     .sort((left, right) => {
       const pinned = Number(right.pinned || 0) - Number(left.pinned || 0)
       if (pinned) return pinned
@@ -234,7 +232,7 @@ export function selectRelevantMemories(
       if (importance) return importance
       return text(right.updatedAt).localeCompare(text(left.updatedAt))
     })
-    .slice(0, 4)
+    .slice(0, 15)
   const coreIds = new Set(alwaysCore.map((memory) => text(memory.id) || `${text(memory.category)}:${text(memory.key)}`))
   const routed = memories.map((memory, index) => {
     const memoryIdentity = text(memory.id) || `${text(memory.category)}:${text(memory.key)}`
@@ -257,7 +255,7 @@ export function selectRelevantMemories(
     return { memory, score: semanticMatch + topicMatch + relevance + learningBoost + decisionBoost + coreBoost + importanceBoost + recency - cooldown }
   }).filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, Math.min(limit, Math.max(0, 8 - alwaysCore.length)))
+    .slice(0, limit)
     .map((item) => item.memory)
   return [...alwaysCore, ...routed.filter((memory) => !coreIds.has(text(memory.id) || `${text(memory.category)}:${text(memory.key)}`))]
 }

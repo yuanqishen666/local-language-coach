@@ -22,7 +22,7 @@ const targetLanguage: Record<string, string> = {
 }
 
 const latinMarkers: Record<string, Set<string>> = {
-  eng: new Set(['a', 'adjective', 'adverb', 'an', 'and', 'are', 'as', 'at', 'common', 'custom', 'daily', 'does', 'for', 'formal', 'from', 'friendly', 'great', 'hello', 'hi', 'in', 'informal', 'is', 'it', 'means', 'noun', 'of', 'okay', 'on', 'or', 'past', 'plural', 'present', 'regional', 'singular', 'study', 'sure', 'thanks', 'the', 'this', 'to', 'travel', 'use', 'used', 'verb', 'with', 'work', 'yes', 'you']),
+  eng: new Set(['a', 'adjective', 'adverb', 'an', 'and', 'are', 'as', 'at', 'common', 'custom', 'daily', 'developer', 'does', 'engineer', 'for', 'formal', 'from', 'friendly', 'great', 'hello', 'hi', 'in', 'informal', 'is', 'it', 'manager', 'means', 'noun', 'of', 'okay', 'on', 'or', 'past', 'plural', 'present', 'regional', 'singular', 'study', 'sure', 'thanks', 'the', 'this', 'to', 'travel', 'use', 'used', 'verb', 'with', 'work', 'yes', 'you']),
   spa: new Set(['adjetivo', 'adverbio', 'al', 'bien', 'charla', 'como', 'común', 'con', 'de', 'del', 'el', 'en', 'es', 'esta', 'este', 'formal', 'forma', 'genial', 'gracias', 'hablar', 'hola', 'informal', 'la', 'las', 'los', 'para', 'pasado', 'plural', 'por', 'presente', 'que', 'se', 'significa', 'singular', 'sí', 'sustantivo', 'una', 'un', 'uso', 'verbo', 'y']),
   fra: new Set(['adjectif', 'adverbe', 'bien', 'bonjour', 'ce', 'cette', 'conversation', 'courant', 'dans', 'de', 'des', 'du', 'en', 'est', 'et', 'forme', 'formel', 'génial', 'informel', 'la', 'le', 'les', 'merci', 'mot', 'nom', 'oui', 'par', 'passé', 'pluriel', 'pour', 'présent', 'que', 'se', 'signifie', 'singulier', 'une', 'un', 'usage', 'verbe']),
   deu: new Set(['adjektiv', 'adverb', 'als', 'bedeutet', 'das', 'danke', 'dem', 'den', 'der', 'die', 'dieses', 'ein', 'eine', 'formell', 'für', 'gespräch', 'hallo', 'im', 'in', 'ist', 'ja', 'man', 'mit', 'oder', 'substantiv', 'toll', 'umgangssprachlich', 'und', 'verwendet', 'verb', 'von', 'wort', 'zu']),
@@ -89,8 +89,8 @@ function matchesExpectedLanguageUnit(value: string, language: string) {
   }
   const expectedScore = exclusiveScores[expected] || 0
   const otherScore = Math.max(0, ...Object.entries(exclusiveScores).filter(([code]) => code !== expected).map(([, score]) => score))
+  if (expectedScore >= 2 && expectedScore > otherScore) return true
   if (otherScore >= 2) return false
-  if (expectedScore >= 2) return true
   return top[0] === expected
 }
 
@@ -113,7 +113,13 @@ export function matchesExpectedLanguage(value: string, language: string) {
 export function matchesExpectedConversationLanguage(value: string, language: string) {
   const text = value.normalize('NFC').replace(/https?:\/\/\S+/gu, ' ').replace(/\s+/gu, ' ').trim()
   if (!text) return true
-  if (text.length >= 24 || scriptCount(text, /[\p{L}]/u) >= 18) return matchesExpectedLanguage(text, language)
+  const wordCount = (text.match(/[\p{L}\p{M}]+/gu) || []).length
+  // Memory labels are often long compounds (German) or short noun phrases
+  // (Italian/Portuguese). Run the statistical sentence detector only when the
+  // value is sentence-like; the marker/script guard below is safer for labels.
+  if (wordCount >= 5 && (text.length >= 32 || scriptCount(text, /[\p{L}]/u) >= 26)) {
+    return matchesExpectedLanguage(text, language)
+  }
 
   const expected = expectedCode(language)
   const han = scriptCount(text, /[\p{Script=Han}]/u)

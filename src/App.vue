@@ -98,7 +98,7 @@ function navActive(path: string) {
 
       <nav class="mobile-navigation">
         <RouterLink v-for="item in mobilePrimaryNav" :key="item[0]" :to="item[0]" :class="{ active: navActive(item[0]) }">
-          <AppIcon :name="item[1]" :size="18" /><span>{{ t(item[2]) }}</span>
+          <AppIcon :name="item[1]" :size="18" /><span data-content-repeat-ok="responsive-alternative">{{ t(item[2]) }}</span>
         </RouterLink>
         <button :class="{ active: mobileMoreOpen || mobileMoreNav.some(item => navActive(item[0])) }" @click="mobileMoreOpen = !mobileMoreOpen"><AppIcon name="more" :size="18" /><span>{{ t('nav.more') }}</span></button>
       </nav>
