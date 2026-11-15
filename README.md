@@ -51,6 +51,16 @@ The interface is also available in 10 languages:
 
 The interface language and target language can be configured separately. Conversations use the target language, while corrections, definitions, translations, and memory content use the selected interface language.
 
+## Install with an AI assistant
+
+If your AI assistant can operate files, a terminal, and a browser on your computer, send it the entire prompt below:
+
+```text
+Install and start Yujian directly on this computer instead of only giving me instructions. The official repository is https://github.com/yuanqishen666/local-language-coach. Download the project into a user-managed, permanent local folder that will be easy to find later. Prefer cloning the repository with Git; if Git is not installed, download and extract the official ZIP of the main branch instead and continue the installation. Check that Node.js meets the project's requirements, and install a compatible version from an official Node.js source if necessary. Then enter the project folder and run npm start in a terminal that can remain open, wait until the application is ready, and open its local page in the browser. If startup fails, run npm run doctor -- --verbose and continue troubleshooting from the diagnostic results. If an existing installation is found, preserve the data/ folder and do not delete, overwrite, upload, or inspect its API keys, conversations, or settings. The installation is complete once the local page opens. Do not configure an API key, model, or any other in-app setting, and do not ask me for an API key. Finally, explain in non-technical language whether Yujian was installed and opened successfully, where it was installed, the current local address, and how to open and stop it in the future. To open it again, use start-app.command on macOS, start-app.cmd on Windows, or start-app.sh on Linux; describe only the method for the current operating system. Explain that the launcher window must remain open while Yujian is in use and that closing it or pressing Ctrl+C stops the application. If the browser does not open automatically, tell me where to find the local address in the launcher window. Do not make me clone the repository or reinstall dependencies again, and do not give npm start as the only future-use instruction.
+```
+
+The AI assistant only downloads the project, prepares the runtime, starts the application, and opens its local page. Configure the API key, model, and other settings yourself inside Yujian. When installation finishes, the assistant will tell you where the project is stored and which launcher to use next time.
+
 ## Requirements
 
 You need:
