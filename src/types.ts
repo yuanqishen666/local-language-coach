@@ -31,7 +31,7 @@ export interface Provider {
 export interface Settings {
   setupComplete: boolean
   ui: { locale: UiLocale }
-  learning: { targetLanguage: string; targetLanguageCode: string; proficiency: string; correctionLevel: string }
+  learning: { targetLanguage: string; targetLanguageCode: string; proficiency: string; correctionLevel: string; speechRate?: number }
   llm: { defaultProvider: string; temperature: number }
   webLookup: { enabled: boolean; provider: 'selected'; timeoutMs: number; maxResults: number }
   providers: Provider[]
@@ -60,6 +60,19 @@ export interface Correction {
   improved: string
   explanation: string
   severity: string
+}
+
+export interface TermLookup {
+  term: string
+  lemma: string
+  partOfSpeech: string
+  pronunciation: string
+  contextMeaning: string
+  forms: Array<{ label: string; value: string }>
+  senses: Array<{ meaning: string; example: string; translation: string }>
+  collocations: Array<{ phrase: string; meaning: string }>
+  register: string
+  regionalNotes: string
 }
 
 export interface MessageMeta {

@@ -8,6 +8,16 @@ import AppIcon from "../components/AppIcon.vue";
 import { displayTargetLanguage, LOCALE_META, TARGET_LANGUAGES, UI_LOCALES } from "../../shared/locales";
 import { learningPreferencesKey, providerConfigurationKey } from "../form-state";
 import { rememberProviderModelProfile, switchProviderModel } from "../model-profiles";
+import { browserSpeech } from "../speech";
+import {
+  DEFAULT_SPEECH_RATE,
+  MAX_SPEECH_RATE,
+  MIN_SPEECH_RATE,
+  SPEECH_RATE_STEP,
+  normalizeSpeechRate,
+  speechPlatformFor,
+  type SpeechPlatform,
+} from "../../shared/speech";
 import type { Provider, Settings } from "../types";
 type RemoteStatus = {
   active: boolean;
@@ -29,7 +39,7 @@ type ProviderTestResult = {
   message: string;
   model: string;
   capability: ProviderCapability;
-  certificationToken: string;
+  setupReceipt: string;
 };
 type ProviderModelOption = {
   id: string;
@@ -51,9 +61,7 @@ const confirmReset = ref(false);
 const resetting = ref(false);
 const result = ref<Record<string, string>>({});
 const verified = ref<Record<string, string>>({});
-const testedCapability = ref<Record<string, ProviderCapability>>({});
-const certificationTokens = ref<Record<string, string>>({});
-const modelDiscoveryTokens = ref<Record<string, string>>({});
+const setupReceipts = ref<Record<string, string>>({});
 const availableModels = ref<Record<string, ProviderModelOption[]>>({});
 const keys = ref<Record<string, string>>({});
 const providerDrafts = ref<Provider[]>([]);
@@ -67,6 +75,7 @@ const languageDraft = reactive<Pick<Settings, "ui" | "learning">>({
     targetLanguageCode: "en",
     proficiency: "B2",
     correctionLevel: "balanced",
+    speechRate: DEFAULT_SPEECH_RATE,
   },
 });
 const languageBaseline = ref("");
@@ -79,6 +88,27 @@ const languageDirty = computed(
 const webLookupDirty = computed(
   () => Boolean(store.settings && webLookupEnabled.value !== store.settings.webLookup.enabled),
 );
+const speechAvailable = computed(() => {
+  browserSpeech.voicesVersion.value;
+  return browserSpeech.supported.value &&
+    browserSpeech.hasTrustedVoice(languageDraft.learning.targetLanguageCode);
+});
+const speechPlatform = computed<SpeechPlatform>(() => {
+  if (typeof navigator === "undefined") return "other";
+  const modernNavigator = navigator as Navigator & { userAgentData?: { platform?: string } };
+  return speechPlatformFor(
+    modernNavigator.userAgentData?.platform || navigator.platform || "",
+    navigator.userAgent,
+  );
+});
+const speechRecommendationKey = computed(() => ({
+  macos: "settings.speechRecommendationMac",
+  windows: "settings.speechRecommendationWindows",
+  linux: "settings.speechRecommendationLinux",
+  other: "settings.speechRecommendationOther",
+})[speechPlatform.value]);
+const displayedSpeechRate = computed(() => normalizeSpeechRate(languageDraft.learning.speechRate).toFixed(2).replace(/0$/u, ""));
+const displayedTargetLanguage = computed(() => displayTargetLanguage(languageDraft.learning.targetLanguageCode, locale.value));
 const currentProviderName = computed(() => {
   const id = store.settings?.llm.defaultProvider;
   return store.settings?.providers.find((provider) => provider.id === id)?.name || "";
@@ -209,8 +239,7 @@ function modelLabel(model: ProviderModelOption) {
 }
 function invalidateProvider(id: string) {
   delete verified.value[id];
-  delete testedCapability.value[id];
-  delete certificationTokens.value[id];
+  delete setupReceipts.value[id];
   result.value[id] = "";
 }
 function providerHasChanges(provider: Provider) {
@@ -219,7 +248,7 @@ function providerHasChanges(provider: Provider) {
   const keyChanged = Boolean(keys.value[provider.id]?.trim());
   const hasFreshTest =
     verified.value[provider.id] === providerSignature(provider) &&
-    Boolean(testedCapability.value[provider.id]);
+    Boolean(setupReceipts.value[provider.id]);
   return configurationChanged || keyChanged || hasFreshTest;
 }
 function savedCapabilityMatches(provider: any) {
@@ -271,6 +300,12 @@ function friendlyError(error: unknown) {
     PROVIDER_INVALID_REQUEST: "settings.errorInvalidRequest",
     PROVIDER_LOOKUP_UNSUPPORTED: "settings.errorLookupUnsupported",
     MODEL_NOT_DISCOVERED: "settings.errorModelRefreshRequired",
+    SETUP_RECEIPT_REQUIRED: "settings.errorRetestRequired",
+    SETUP_RECEIPT_EXPIRED: "settings.errorRetestRequired",
+    SETUP_RECEIPT_INVALID: "settings.errorRetestRequired",
+    SETUP_RECEIPT_PROVIDER_MISMATCH: "settings.errorRetestRequired",
+    SETUP_RECEIPT_MODEL_MISMATCH: "settings.errorRetestRequired",
+    SETUP_RECEIPT_KEY_MISMATCH: "settings.errorRetestRequired",
   };
   return error.code && messages[error.code] ? t(messages[error.code]) : t("common.operationFailed");
 }
@@ -284,14 +319,12 @@ async function runProviderTest(provider: any) {
     );
     if (!data.ok) throw new Error(data.message);
     verified.value[provider.id] = providerSignature(provider);
-    testedCapability.value[provider.id] = data.capability;
-    certificationTokens.value[provider.id] = data.certificationToken;
+    setupReceipts.value[provider.id] = data.setupReceipt;
     result.value[provider.id] = "✓ " + t("settings.statusVerified");
     return true;
   } catch (error) {
     delete verified.value[provider.id];
-    delete testedCapability.value[provider.id];
-    delete certificationTokens.value[provider.id];
+    delete setupReceipts.value[provider.id];
     result.value[provider.id] = "× " + friendlyError(error);
     return false;
   } finally {
@@ -314,22 +347,18 @@ async function saveProvider(provider: any) {
       !(await runProviderTest(provider))
     )
       return;
-    await api.put(`/providers/${provider.id}`, {
+    const saved = await api.put<Settings>(`/providers/${provider.id}`, {
       ...providerOverrides(provider),
       enabled: true,
       contextWindowTokens: provider.contextWindowTokens,
       maxOutputTokens: provider.maxOutputTokens,
       modelProfiles: provider.modelProfiles,
-      capability: testedCapability.value[provider.id] || provider.capability,
-      certificationToken: certificationTokens.value[provider.id],
-      modelDiscoveryToken: modelDiscoveryTokens.value[provider.id],
+      setupReceipt: setupReceipts.value[provider.id],
     });
     keys.value[provider.id] = "";
     delete verified.value[provider.id];
-    delete testedCapability.value[provider.id];
-    delete certificationTokens.value[provider.id];
-    delete modelDiscoveryTokens.value[provider.id];
-    await store.load();
+    delete setupReceipts.value[provider.id];
+    store.settings = saved;
     syncProviderDraft(provider.id);
     defaultProvider.value = store.settings?.llm.defaultProvider || "";
     result.value[provider.id] = "✓ " + t("settings.testSaved");
@@ -359,14 +388,12 @@ async function loadModels(provider: any) {
   loadingModels.value = provider.id;
   result.value[provider.id] = "";
   delete availableModels.value[provider.id];
-  delete modelDiscoveryTokens.value[provider.id];
   try {
-    const data = await api.post<{ models: ProviderModelOption[]; discoveryToken: string }>(
+    const data = await api.post<{ models: ProviderModelOption[] }>(
       `/providers/${provider.id}/models`,
       providerOverrides(provider),
     );
     availableModels.value[provider.id] = data.models;
-    modelDiscoveryTokens.value[provider.id] = data.discoveryToken;
     result.value[provider.id] = data.models.length
       ? "✓ " + t("settings.modelsFound", { count: data.models.length })
       : "× " + t("settings.noModels");
@@ -417,7 +444,10 @@ async function copyRemoteUrl() {
   }
 }
 initializeDrafts();
-onMounted(loadRemote);
+onMounted(() => {
+  browserSpeech.initialize();
+  void loadRemote();
+});
 </script>
 <template>
   <div v-if="store.settings" class="page settings-page">
@@ -490,6 +520,44 @@ onMounted(loadRemote);
                 </option>
               </select>
             </div>
+            <section class="speech-settings" aria-labelledby="speech-settings-title" data-qs-id="qs-speech-settings">
+              <header>
+                <div class="speech-heading">
+                  <div class="speech-title-row">
+                    <span><AppIcon name="volume" :size="18" /></span>
+                    <h3 id="speech-settings-title">{{ t('settings.pronunciationTitle') }}</h3>
+                  </div>
+                  <p>{{ t('settings.pronunciationHelp') }}</p>
+                </div>
+                <p class="speech-recommendation" data-qs-id="qs-speech-browser-recommendation"><AppIcon name="spark" :size="14" /><span>{{ t(speechRecommendationKey) }}</span></p>
+              </header>
+              <div v-if="speechAvailable" class="field speech-rate-field" data-qs-id="qs-speech-rate">
+                <div class="speech-rate-label">
+                  <label for="speech-rate">{{ t('settings.speechRate') }}</label>
+                  <output for="speech-rate">{{ displayedSpeechRate }}×</output>
+                </div>
+                <input
+                  id="speech-rate"
+                  v-model.number="languageDraft.learning.speechRate"
+                  name="speechRate"
+                  type="range"
+                  :min="MIN_SPEECH_RATE"
+                  :max="MAX_SPEECH_RATE"
+                  :step="SPEECH_RATE_STEP"
+                  :aria-valuetext="t('settings.speechRateValue', { rate: displayedSpeechRate })"
+                  aria-describedby="speech-rate-help"
+                />
+                <div class="speech-rate-scale" aria-hidden="true">
+                  <span>{{ t('settings.speechSlower') }}</span>
+                  <span>{{ t('settings.speechFaster') }}</span>
+                </div>
+                <small id="speech-rate-help">{{ t('settings.speechRateHelp') }}</small>
+              </div>
+              <div v-else class="speech-unavailable" role="status" data-qs-id="qs-speech-unavailable">
+                <AppIcon name="volume" :size="16" />
+                <p>{{ t('settings.speechUnavailable', { language: displayedTargetLanguage }) }}</p>
+              </div>
+            </section>
           </div>
           <button
             class="btn primary"
@@ -580,8 +648,9 @@ onMounted(loadRemote);
                 <small>{{ modelsLoaded(provider) ? (hasModelList(provider) ? t('settings.modelListHelp', { count: availableModels[provider.id].length }) : t('settings.noModels')) : t('settings.modelDiscoveryHelp') }}</small>
               </div>
               <div v-if="provider.apiKeySecret" class="field api-key">
-                <label>{{ t('settings.apiKey') }}</label
+                <label :for="`api-key-${provider.id}`">{{ t('settings.apiKey') }}</label
                 ><input
+                  :id="`api-key-${provider.id}`"
                   v-model="keys[provider.id]"
                   type="password"
                   :placeholder="
@@ -607,6 +676,8 @@ onMounted(loadRemote);
             <footer>
               <span
                 :class="{ success: result[provider.id]?.startsWith('✓') }"
+                role="status"
+                aria-live="polite"
                 >{{ result[provider.id] }}</span
               >
               <div>
@@ -876,6 +947,122 @@ onMounted(loadRemote);
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   margin: 25px 0;
+}
+.speech-settings {
+  grid-column: 1 / -1;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.42);
+}
+.speech-settings > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.speech-heading {
+  min-width: 0;
+}
+.speech-title-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.speech-title-row > span {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #e5eaf7;
+  color: var(--blue);
+}
+.speech-heading h3 {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.35;
+  text-box: trim-both cap alphabetic;
+}
+.speech-heading > p,
+.speech-recommendation,
+.speech-unavailable p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+.speech-heading > p {
+  margin-top: 7px;
+  margin-inline-start: 47px;
+}
+.speech-recommendation {
+  max-width: 310px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: #f3efe3;
+  color: #75642f;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.speech-recommendation svg {
+  flex: 0 0 auto;
+}
+.speech-rate-field {
+  max-width: 620px;
+  margin-top: 18px;
+}
+.speech-rate-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.speech-rate-label output {
+  min-width: 49px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--blue);
+  color: white;
+  font-size: 11px;
+  font-weight: 750;
+  text-align: center;
+}
+.speech-rate-field input[type="range"] {
+  height: 48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  accent-color: var(--blue);
+  cursor: pointer;
+}
+.speech-rate-field input[type="range"]:focus-visible {
+  outline: 3px solid rgba(49, 88, 216, 0.28);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+.speech-rate-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: -8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.speech-unavailable {
+  margin-top: 17px;
+  padding: 12px 13px;
+  border-radius: 10px;
+  background: #f0eee8;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.speech-unavailable svg {
+  flex: 0 0 auto;
 }
 .section-intro {
   padding: 0 2px 18px;
@@ -1246,6 +1433,13 @@ onMounted(loadRemote);
   .privacy-grid,
   .config-summary > div {
     grid-template-columns: 1fr;
+  }
+  .speech-settings > header {
+    display: block;
+  }
+  .speech-recommendation {
+    max-width: none;
+    margin-top: 13px;
   }
   .provider-fields .api-key {
     grid-column: auto;

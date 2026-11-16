@@ -4,7 +4,7 @@ import path from 'node:path'
 import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { nanoid } from 'nanoid'
-import { getConfig, getSecrets, resetConfig, saveConfig, setSecret } from './services/config.js'
+import { getConfig, getSecrets, resetConfig, saveConfig, saveConfigAndSecrets } from './services/config.js'
 import { db, row, rows } from './services/database.js'
 import { readAiResponseCache, writeAiResponseCache } from './services/ai-response-cache.js'
 import { getRemoteStatus, isRemoteRequestAllowed, readRemoteState } from './services/remote.js'
@@ -12,9 +12,10 @@ import { safeJson } from './utils/json.js'
 import { lookupCacheKey } from './utils/ai-cache-key.js'
 import { translationCacheKey } from './utils/translation-cache.js'
 import { coachTurn, localizeConversationSetup, localizeInterfaceValues, localizeMemoryValues, lookupTerm, suggestSetups, summarizeEpisode, translateMessage } from './ai/engine.js'
-import { assertModelConfigured, consumeProviderCertification, consumeProviderModelDiscovery, listProviderModels, STRUCTURED_CONTRACT_VERSION, testProvider } from './ai/provider.js'
-import type { AppConfig, ConversationEpisode, ConversationSetup, ProviderCapability, ProviderModelProfile } from './types.js'
+import { assertModelConfigured, listProviderModels, STRUCTURED_CONTRACT_VERSION, testProvider } from './ai/provider.js'
+import type { AppConfig, ConversationEpisode, ConversationSetup, ProviderModelProfile } from './types.js'
 import type { ProviderTestOverrides } from './ai/provider.js'
+import { resetProviderSetupSigningKey, verifyProviderSetupReceipt } from './services/provider-setup-receipt.js'
 import { emptyConversationState, extractiveEpisodeFallback, mergeConversationState, normalizeConversationSetup, normalizeConversationState, type StoredConversationMessage } from './ai/context.js'
 import { supportsProviderLookup } from './lookup/provider-tools.js'
 import { normalizeUiLocale } from '../shared/locales.js'
@@ -155,6 +156,7 @@ app.put<{ Body: AppConfig }>('/api/settings', async (request) => {
 
 app.post('/api/settings/reset', async () => {
   const next = await resetConfig({ clearSecrets: true })
+  await resetProviderSetupSigningKey()
   return { ok: true, config: next }
 })
 
@@ -184,8 +186,9 @@ function parseModelProfiles(value: unknown) {
   return profiles
 }
 
-app.put<{ Params: { id: string }; Body: { apiKey?: string; model?: string; enabled?: boolean; contextWindowTokens?: number; maxOutputTokens?: number; modelProfiles?: Record<string, ProviderModelProfile>; capability?: ProviderCapability; certificationToken?: string; modelDiscoveryToken?: string } }>('/api/providers/:id', async (request) => {
+app.put<{ Params: { id: string }; Body: { apiKey?: string; model?: string; enabled?: boolean; contextWindowTokens?: number; maxOutputTokens?: number; modelProfiles?: Record<string, ProviderModelProfile>; setupReceipt?: string } }>('/api/providers/:id', async (request) => {
   const current = await getConfig()
+  const secrets = await getSecrets()
   const provider = current.providers.find((item) => item.id === request.params.id)
   if (!provider) throw Object.assign(new Error('Provider not found'), { statusCode: 404 })
   const previousModel = provider.model
@@ -193,20 +196,6 @@ app.put<{ Params: { id: string }; Body: { apiKey?: string; model?: string; enabl
   const requestedModel = typeof request.body.model === 'string' ? request.body.model.trim() : previousModel
   if (!requestedModel || requestedModel.length > 200 || ['__proto__', 'prototype', 'constructor'].includes(requestedModel)) {
     throw Object.assign(new Error('Choose a valid model before saving'), { statusCode: 400 })
-  }
-  if (requestedModel !== previousModel) {
-    const discovered = Boolean(request.body.modelDiscoveryToken) && await consumeProviderModelDiscovery(
-      provider.id,
-      request.body.modelDiscoveryToken!,
-      requestedModel,
-      enteredKey,
-    )
-    if (!discovered) {
-      throw Object.assign(new Error('Refresh the official model list and choose a model again'), {
-        statusCode: 409,
-        code: 'MODEL_NOT_DISCOVERED',
-      })
-    }
   }
   const submittedProfiles = parseModelProfiles(request.body.modelProfiles)
   provider.modelProfiles = { ...(provider.modelProfiles || {}), ...(submittedProfiles || {}) }
@@ -230,35 +219,53 @@ app.put<{ Params: { id: string }; Body: { apiKey?: string; model?: string; enabl
   }
   if (typeof request.body.enabled === 'boolean') provider.enabled = request.body.enabled
   else provider.enabled = true
-  // An empty field means "keep the saved key". Key removal is deliberately
-  // restricted to DELETE /api/providers/:id/secret.
-  if (enteredKey && provider.apiKeySecret) await setSecret(provider.apiKeySecret, enteredKey)
-  const capability = request.body.capability
-  const capabilityMatches = capability?.conversationReady === true &&
-    capability.lookupReady === true &&
-    capability.contractVersion === STRUCTURED_CONTRACT_VERSION &&
-    capability.model === provider.model &&
-    capability.baseUrl.replace(/\/$/, '') === provider.baseUrl.replace(/\/$/, '')
-  const keepsExistingCertification = previousModel === provider.model && provider.capability &&
-    capabilityMatches && JSON.stringify(provider.capability) === JSON.stringify(capability)
-  const hasFreshCertification = capabilityMatches && request.body.certificationToken &&
-    await consumeProviderCertification(provider.id, request.body.certificationToken, capability, enteredKey)
-  provider.capability = keepsExistingCertification || hasFreshCertification ? capability : undefined
+  const apiKey = enteredKey || secrets[provider.apiKeySecret] || ''
+  const existingCapabilityMatches = previousModel === provider.model &&
+    provider.capability?.conversationReady === true &&
+    provider.capability.lookupReady === true &&
+    provider.capability.contractVersion === STRUCTURED_CONTRACT_VERSION &&
+    provider.capability.model === provider.model &&
+    provider.capability.baseUrl.replace(/\/$/, '') === provider.baseUrl.replace(/\/$/, '')
+  const requiresReceipt = Boolean(request.body.setupReceipt) || Boolean(enteredKey) ||
+    previousModel !== provider.model || !existingCapabilityMatches || !apiKey
+  if (requiresReceipt) {
+    const claims = await verifyProviderSetupReceipt(request.body.setupReceipt, {
+      providerId: provider.id,
+      model: provider.model,
+      apiKey,
+    })
+    const capability = claims.capability
+    if (capability.conversationReady !== true || capability.lookupReady !== true ||
+      capability.contractVersion !== STRUCTURED_CONTRACT_VERSION ||
+      capability.model !== provider.model ||
+      capability.baseUrl.replace(/\/$/, '') !== provider.baseUrl.replace(/\/$/, '') ||
+      !['json_schema', 'json_object', 'prompt_json'].includes(capability.outputMode)) {
+      throw Object.assign(new Error('The provider setup receipt is stale or incompatible. Test the model again.'), {
+        statusCode: 409,
+        code: 'SETUP_RECEIPT_INVALID',
+      })
+    }
+    provider.capability = capability
+  }
   if (!current.llm.defaultProvider && provider.capability) current.llm.defaultProvider = provider.id
-  await saveConfig(current)
-  return { ok: true }
+  const nextSecrets = { ...secrets }
+  if (enteredKey && provider.apiKeySecret) nextSecrets[provider.apiKeySecret] = enteredKey
+  await saveConfigAndSecrets(current, nextSecrets)
+  return settingsPayload(current)
 })
 
 app.delete<{ Params: { id: string } }>('/api/providers/:id/secret', async (request) => {
   const current = await getConfig()
+  const secrets = await getSecrets()
   const provider = current.providers.find((item) => item.id === request.params.id)
   if (!provider) throw Object.assign(new Error('Provider not found'), { statusCode: 404 })
   if (!provider.apiKeySecret) throw Object.assign(new Error('This provider does not use an API key'), { statusCode: 400 })
-  await setSecret(provider.apiKeySecret, '')
+  const nextSecrets = { ...secrets }
+  delete nextSecrets[provider.apiKeySecret]
   if (current.llm.defaultProvider === provider.id && current.webLookup.enabled) {
     current.webLookup.enabled = false
-    await saveConfig(current)
   }
+  await saveConfigAndSecrets(current, nextSecrets)
   return { ok: true }
 })
 

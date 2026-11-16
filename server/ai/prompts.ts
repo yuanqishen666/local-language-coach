@@ -34,23 +34,26 @@ function correctionRule(level: AppConfig['learning']['correctionLevel']) {
 
 export function turnAnalysisSystem(
   config: AppConfig,
-  rescueRequired: boolean,
+  nonTargetDetected: boolean,
   relevantMemories: Array<Record<string, unknown>> = [],
 ) {
   return [
     'Analyze the latest learner turn before a conversation partner replies. Return only the structured analysis object. The recent dialogue is context; analyze and quote only the latest learner message.',
     'Target language: ' + config.learning.targetLanguage + ' (' + config.learning.targetLanguageCode + '), learner level: ' + config.learning.proficiency + '. Feedback language: ' + uiLanguage(config) + '.',
     'Relevant confirmed memories for this turn: ' + JSON.stringify(relevantMemories) + '.',
-    'Language feedback:',
+    'Language classification and feedback:',
+    '- Set languageMatch=target only when all meaningful learner-written wording is in the target language. Ignore URLs, code, proper names, and established loanwords when classifying.',
+    '- Set languageMatch=non_target when the learner mainly wrote in any other language. Set languageMatch=mixed when meaningful wording from any other language appears inside an otherwise target-language turn. This applies to every language, not only the feedback language.',
+    '- For languageMatch=non_target or mixed, reconstruction is REQUIRED: translate the learner’s complete intended message into one natural target-language sentence or turn. original must be the complete latest learner message. Do not duplicate that full reconstruction in corrections.',
+    '- For languageMatch=target, reconstruction must be null; use corrections only for applicable target-language errors.',
+    nonTargetDetected
+      ? '- A deterministic precheck found strong non-target-language evidence. languageMatch cannot be target, and reconstruction is required.'
+      : '- The deterministic precheck was inconclusive. Classify the language from the full message; short words and same-script languages still require semantic judgment.',
     '- Understanding what the learner probably meant is not a reason to omit an error. A nonexistent, misspelled, or wrong word that is guessable from context still requires a correction.',
     '- ' + correctionRule(config.learning.correctionLevel),
     '- For every applicable issue, original must be a short exact substring of the latest learner message. improved must be the natural replacement in the target language and include any article, preposition, or surrounding word needed so substituting it produces a natural sentence. explanation must be concise ' + uiLanguage(config) + '. Do not return an empty corrections array when an applicable issue exists.',
     '- Use severity=meaning for a wrong or nonexistent word or an error that changes the intended meaning; severity=naturalness for clear grammar or idiom problems; use severity=minor only for genuinely minor intensive-level feedback.',
     '- Do not correct acceptable speech fillers, dialect, deliberate style, proper names, or a natural short answer. Do not invent an error merely to provide feedback.',
-    '- reconstruction is reserved for a complete target-language rescue when the learner used the feedback language to fill a gap. Do not duplicate a reconstruction in corrections.',
-    rescueRequired
-      ? '- The latest turn contains feedback-language wording, so reconstruction is REQUIRED and must contain the learner’s complete intended target-language sentence.'
-      : '- No full-sentence rescue is required, so reconstruction must be null.',
     'Lookup decision:',
     '- Classify independently of whether lookup is enabled. Split every real information need or conversational intent into lookup.parts.',
     '- Use reply for ordinary conversation, opinions, creative work, supplied-content analysis, and stable knowledge. Use lookup when correctness depends on the current date, mutable external state, an explicit request to check, or a learner-specified external location.',
@@ -163,8 +166,8 @@ export function coachSystem(
     '- action=clarify only when a missing identity or locator prevents a useful answer. roleReply must be the one short, natural clarification.',
     '- When lookup is disabled and there is no explicit locator, roleReply should answer stable parts and naturally admit that the changing part cannot be checked now. Never pretend to have searched.',
     '- query is one focused search query. locator is null when the learner supplied no location. parts must contain every real information need (or conversational intent), its exact subject, and whether that part depends on lookup; never return an empty parts array for the initial turn.',
-    '- Mandatory rescue: if the learner used feedback-language words or mainly wrote in the feedback language, reconstruction must give their complete intended sentence in the target language. roleReply then answers that intent.',
-    ...(rescueRequired ? ['- This turn contains feedback-language wording. reconstruction is REQUIRED, not null.'] : []),
+    '- Mandatory rescue: if authoritative analysis sets languageMatch to non_target or mixed, reconstruction must give the learner’s complete intended sentence in the target language. This applies no matter which other language they used. roleReply then answers that intent.',
+    ...(rescueRequired ? ['- This turn contains meaningful wording outside the target language. reconstruction is REQUIRED, not null.'] : []),
     '- Feedback is separate UI metadata, never spoken by the conversation partner. ' + correctionRule(config.learning.correctionLevel) + ' Explanations use ' + uiLanguage(config) + '. ' + interfaceLanguageStyle(config) + ' Do not duplicate a full-sentence rescue as a correction.',
     '- statePatch is compact bookkeeping, not a plan. currentTopic names the topic actually active now. openedLoops contains only unanswered questions introduced by roleReply. resolvedLoops contains IDs from current state that the learner just answered. sceneFacts contains only durable conversation-world details introduced in roleReply.',
     '- userFacts contains only durable facts explicitly stated in the latest learner message. Each quote must be an exact substring of that message. Mark health, belief, precise location, identity, finance, or similar facts sensitive. Never infer a personal fact and never copy a fact from your own reply.',
@@ -224,7 +227,7 @@ export function lookupReplySystem(config: AppConfig, setup: ConversationSetup | 
     '- If outcome kind is disabled, no lookup happened and any earlier factual draft was deliberately removed as unsafe. Naturally say you cannot check the changing part right now, never pretend you looked, and never present or calculate an unverified changing value as current. Still answer any stable parts.',
     '- If the exact thing was not found, naturally say you looked but did not see it. Ask where the learner saw it or invite them to send the link, screenshot, or text when that would help.',
     '- If the learner already supplied a location and it opened successfully, do not ask them to resend the same link or repeat where they saw it. Ask for a different page/post or the specific passage only when that would genuinely help.',
-    '- If a supplied page could not be opened, say that plainly. Do not claim the information does not exist.',
+    '- If a supplied page could not be opened, use the outcome note to state the known reason accurately (for example timeout, HTTP status, safety block, size limit, unsupported type, or network failure). Do not replace it with a generic claim that you lack browsing ability, speculate that a public page is private, or claim the information does not exist.',
     '- A related but different item may be mentioned only as different, in one short optional sentence. Never substitute it for the requested item.',
     '- Keep reconstruction and corrections useful but separate from roleReply. lookup must use action=reply with an empty query and null locator.',
     targetLanguageStyle(config),
@@ -278,7 +281,7 @@ export function episodeSummarySystem(config: AppConfig) {
 }
 
 export function lookupSystem(config: AppConfig) {
-  return 'Explain a selected ' + config.learning.targetLanguage + ' word or phrase in ' + uiLanguage(config) + ', prioritizing its meaning in the supplied sentence. ' + interfaceLanguageStyle(config) + ' Give a useful lemma, reading when relevant, at least one natural example with translation, common forms or senses when helpful, and concise usage notes. Empty auxiliary fields are allowed.'
+  return 'Explain a selected ' + config.learning.targetLanguage + ' word or phrase in ' + uiLanguage(config) + ', prioritizing its meaning in the supplied sentence. ' + interfaceLanguageStyle(config) + ' Give a useful lemma, reading when relevant, at least one natural example with translation, common forms or senses when helpful, and concise usage notes. Every item in collocations must contain a natural target-language phrase and its concise meaning in the interface language; never return a collocation without its meaning. Empty auxiliary fields are allowed.'
 }
 
 export function translationSystem(config: AppConfig) {

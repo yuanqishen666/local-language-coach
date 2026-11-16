@@ -8,6 +8,20 @@ test('an unconfigured provider does not ship with a hard-coded model name', () =
   assert.doesNotThrow(() => validateConfig(config))
 })
 
+test('speech rate defaults to a slower pace and validates the learning range', () => {
+  const config = structuredClone(defaultConfig)
+  assert.equal(config.learning.speechRate, 0.85)
+  assert.doesNotThrow(() => validateConfig(config))
+
+  delete config.learning.speechRate
+  assert.doesNotThrow(() => validateConfig(config))
+
+  config.learning.speechRate = 0.59
+  assert.throws(() => validateConfig(config), /Speech rate is invalid/)
+  config.learning.speechRate = 1.21
+  assert.throws(() => validateConfig(config), /Speech rate is invalid/)
+})
+
 test('configured providers require a model and accept separate model profiles', () => {
   const config = structuredClone(defaultConfig)
   const provider = config.providers[0]

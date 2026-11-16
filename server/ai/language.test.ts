@@ -15,9 +15,35 @@ const samples = {
   'hi-IN': 'इस शब्द का अर्थ दो लोगों के बीच छोटी और मैत्रीपूर्ण बातचीत है।',
 } as const
 
+const targetSamples = {
+  zh: samples['zh-CN'],
+  en: samples['en-US'],
+  es: samples['es-419'],
+  fr: samples['fr-FR'],
+  ja: samples['ja-JP'],
+  de: samples['de-DE'],
+  ko: samples['ko-KR'],
+  it: samples['it-IT'],
+  pt: samples['pt-BR'],
+  hi: samples['hi-IN'],
+} as const
+
 test('accepts natural output in every supported interface language', () => {
   for (const [locale, sample] of Object.entries(samples)) {
     assert.equal(matchesExpectedLanguage(sample, locale), true, locale)
+  }
+})
+
+test('the conversation guard accepts every supported target-language code', () => {
+  for (const [code, sample] of Object.entries(targetSamples)) {
+    assert.equal(matchesExpectedConversationLanguage(sample, code), true, code)
+  }
+})
+
+test('the conversation guard rejects clear non-target input across all ten target languages', () => {
+  for (const code of Object.keys(targetSamples)) {
+    const foreign = code === 'en' ? samples['zh-CN'] : samples['en-US']
+    assert.equal(matchesExpectedConversationLanguage(foreign, code), false, code)
   }
 })
 

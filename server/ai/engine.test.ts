@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { z } from 'zod'
-import { explicitMemoryClauses, generateStructured, naturalReplyIssues, normalizeMemoryAnalysis, normalizeTurnAnalysis } from './engine.js'
+import { explicitMemoryClauses, generateStructured, languageFeedbackConsistent, likelyNeedsTargetLanguageRescue, naturalReplyIssues, normalizeMemoryAnalysis, normalizeTurnAnalysis } from './engine.js'
 import { ProviderRequestError } from './provider.js'
+import { termLookupSchema, turnAnalysisSchema } from './schemas.js'
 
 test('turn analysis keeps only feedback and facts grounded in the latest message', () => {
   const normalized = normalizeTurnAnalysis({
@@ -65,6 +66,59 @@ test('turn analysis normalizes a provider string reconstruction instead of faili
   })
 })
 
+test('non-target and mixed turns require a complete reconstruction', () => {
+  const complete = {
+    languageMatch: 'non_target' as const,
+    lookup: { action: 'reply', parts: [{ text: 'intent', needsLookup: false, reason: 'stable', subject: 'intent' }], query: '', locator: null },
+    reconstruction: { type: 'translation', original: '我今天很累', improved: 'I am very tired today.', explanation: '这是完整的英语表达。' },
+    corrections: [],
+  }
+  assert.equal(turnAnalysisSchema.safeParse(complete).success, true)
+  assert.equal(languageFeedbackConsistent(complete), true)
+  assert.equal(languageFeedbackConsistent({ ...complete, reconstruction: null }), false)
+  assert.equal(languageFeedbackConsistent({ languageMatch: 'mixed', reconstruction: complete.reconstruction }), true)
+  assert.equal(languageFeedbackConsistent({ languageMatch: 'target', reconstruction: null }), true)
+  assert.equal(languageFeedbackConsistent({ languageMatch: 'target', reconstruction: complete.reconstruction }), false)
+  assert.equal(languageFeedbackConsistent({ languageMatch: 'target', reconstruction: null }, true), false)
+  const normalized = normalizeTurnAnalysis({ ...complete, reconstruction: { ...complete.reconstruction, original: '今天' } }, '我今天很累')
+  assert.equal(normalized.languageMatch, 'non_target')
+  assert.equal(normalized.reconstruction?.original, '我今天很累')
+  const missingClassification = normalizeTurnAnalysis({ ...complete, languageMatch: undefined, reconstruction: null }, '我今天很累')
+  assert.equal(turnAnalysisSchema.safeParse(missingClassification).success, false)
+})
+
+test('the deterministic rescue precheck covers every supported target language', () => {
+  const targetText = {
+    zh: '这个词表示两个人之间简短而友好的交谈。',
+    en: 'This word means a brief and friendly conversation between two people.',
+    es: 'Esta palabra significa una conversación breve y amistosa entre dos personas.',
+    fr: 'Ce mot désigne une conversation brève et amicale entre deux personnes.',
+    ja: 'この言葉は、二人の間の短く親しみやすい会話を表します。',
+    de: 'Dieses Wort bezeichnet ein kurzes und freundliches Gespräch zwischen zwei Personen.',
+    ko: '이 단어는 두 사람 사이의 짧고 친근한 대화를 뜻합니다.',
+    it: 'Questa parola indica una conversazione breve e amichevole tra due persone.',
+    pt: 'Esta palavra significa uma conversa breve e amigável entre duas pessoas.',
+    hi: 'इस शब्द का अर्थ दो लोगों के बीच छोटी और मैत्रीपूर्ण बातचीत है।',
+  } as const
+  for (const [code, text] of Object.entries(targetText)) {
+    assert.equal(likelyNeedsTargetLanguageRescue(text, code), false, code)
+    const foreign = code === 'en' ? targetText.zh : targetText.en
+    assert.equal(likelyNeedsTargetLanguageRescue(foreign, code), true, code)
+  }
+  assert.equal(likelyNeedsTargetLanguageRescue('OpenAI', 'zh'), false)
+  assert.equal(likelyNeedsTargetLanguageRescue('`const answer = 42`', 'ja'), false)
+  assert.equal(likelyNeedsTargetLanguageRescue('https://example.com', 'ko'), false)
+})
+
+test('term lookup requires a meaning for every collocation', () => {
+  const base = {
+    term: 'corrections', lemma: 'correction', partOfSpeech: 'noun', pronunciation: '', contextMeaning: '纠正', forms: [], senses: [], register: '', regionalNotes: '',
+  }
+  assert.equal(termLookupSchema.safeParse({ ...base, collocations: [{ phrase: 'make corrections', meaning: '进行修改或纠正' }] }).success, true)
+  assert.equal(termLookupSchema.safeParse({ ...base, collocations: ['make corrections'] }).success, false)
+  assert.equal(termLookupSchema.safeParse({ ...base, collocations: [{ phrase: 'make corrections' }] }).success, false)
+})
+
 test('turn analysis does not reinterpret unrelated fields as reconstruction', () => {
   const normalized = normalizeTurnAnalysis({
     lookup: {
@@ -93,7 +147,7 @@ test('turn analysis does not reinterpret unrelated fields as reconstruction', ()
   }, 'latest message')
   assert.deepEqual(existingObjectBehavior.reconstruction, {
     type: 'correction',
-    original: '',
+    original: 'latest message',
     improved: 'A corrected sentence.',
     explanation: '',
   })

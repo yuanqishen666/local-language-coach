@@ -1,12 +1,14 @@
-import { constants, copyFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { constants, copyFile, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { AppConfig, ProviderConfig } from '../types.js'
 import { UI_LOCALES } from '../../shared/locales.js'
+import { DEFAULT_SPEECH_RATE, MAX_SPEECH_RATE, MIN_SPEECH_RATE } from '../../shared/speech.js'
 
 const root = process.env.LLC_DATA_DIR || path.resolve(process.cwd(), 'data')
 const configPath = path.join(root, 'config.json')
 const secretsPath = path.join(root, 'secrets.json')
+const providerTransactionPath = path.join(root, 'provider-save.transaction.json')
 
 const providerDefaults: ProviderConfig[] = [
   { id: 'openai', name: 'OpenAI', kind: 'openai', baseUrl: 'https://api.openai.com/v1', model: '', apiKeySecret: 'providers.openai.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200, modelProfiles: {} },
@@ -19,7 +21,7 @@ const providerDefaults: ProviderConfig[] = [
 export const defaultConfig: AppConfig = {
   setupComplete: false,
   ui: { locale: 'zh-CN' },
-  learning: { targetLanguage: 'English', targetLanguageCode: 'en', proficiency: 'B1', correctionLevel: 'balanced' },
+  learning: { targetLanguage: 'English', targetLanguageCode: 'en', proficiency: 'B1', correctionLevel: 'balanced', speechRate: DEFAULT_SPEECH_RATE },
   llm: { defaultProvider: '', temperature: 0.7 },
   webLookup: { enabled: false, provider: 'selected', timeoutMs: 8_000, maxResults: 5 },
   server: { host: '127.0.0.1', port: 4174 },
@@ -44,6 +46,10 @@ export function validateConfig(input: AppConfig): AppConfig {
   if (!UI_LOCALES.includes(ui.locale)) throw new Error('Unsupported interface locale')
   if (typeof learning.targetLanguage !== 'string' || typeof learning.targetLanguageCode !== 'string' || typeof learning.proficiency !== 'string') throw new Error('Learning preferences are incomplete')
   if (!['light', 'balanced', 'intensive'].includes(learning.correctionLevel)) throw new Error('Unsupported correction level')
+  if (learning.speechRate !== undefined &&
+    (typeof learning.speechRate !== 'number' || !Number.isFinite(learning.speechRate) || learning.speechRate < MIN_SPEECH_RATE || learning.speechRate > MAX_SPEECH_RATE)) {
+    throw new Error('Speech rate is invalid')
+  }
   if (!Number.isFinite(llm.temperature) || typeof llm.defaultProvider !== 'string') throw new Error('Model settings are incomplete')
   if (webLookup.provider !== 'selected' || typeof webLookup.enabled !== 'boolean') throw new Error('Web lookup settings are invalid')
   if (!Number.isInteger(webLookup.timeoutMs) || webLookup.timeoutMs < 2_000 || webLookup.timeoutMs > 20_000) throw new Error('Web lookup timeout is invalid')
@@ -96,6 +102,14 @@ async function atomicJson(file: string, data: unknown, mode = 0o600) {
   await rename(tmp, file)
 }
 
+function validateSecrets(input: unknown): Record<string, string> {
+  if (!input || typeof input !== 'object' || Array.isArray(input) ||
+    Object.values(input).some((secret) => typeof secret !== 'string')) {
+    throw new Error('Expected every secret value to be a string')
+  }
+  return structuredClone(input as Record<string, string>)
+}
+
 function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT'
 }
@@ -113,8 +127,44 @@ async function invalidJsonError(file: string, label: string, cause: unknown) {
   )
 }
 
+let recoveryPromise: Promise<void> | undefined
+let writeQueue = Promise.resolve()
+
+function serializeWrite<T>(operation: () => Promise<T>) {
+  const result = writeQueue.then(operation, operation)
+  writeQueue = result.then(() => undefined, () => undefined)
+  return result
+}
+
+async function recoverProviderTransaction() {
+  let source: string
+  try {
+    source = await readFile(providerTransactionPath, 'utf8')
+  } catch (error) {
+    if (isMissingFile(error)) return
+    throw error
+  }
+  try {
+    const transaction = JSON.parse(source) as { version?: unknown; config?: unknown; secrets?: unknown }
+    if (transaction.version !== 1) throw new Error('Unsupported provider transaction version')
+    const nextConfig = validateConfig(transaction.config as AppConfig)
+    const nextSecrets = validateSecrets(transaction.secrets)
+    await atomicJson(configPath, nextConfig)
+    await atomicJson(secretsPath, nextSecrets)
+    await unlink(providerTransactionPath)
+  } catch (error) {
+    throw await invalidJsonError(providerTransactionPath, 'Pending provider transaction', error)
+  }
+}
+
+function ensureProviderTransactionRecovered() {
+  recoveryPromise ||= recoverProviderTransaction()
+  return recoveryPromise
+}
+
 export async function getConfig(): Promise<AppConfig> {
   await ensureRoot()
+  await ensureProviderTransactionRecovered()
   let source: string
   try {
     source = await readFile(configPath, 'utf8')
@@ -136,19 +186,56 @@ export async function getConfig(): Promise<AppConfig> {
 
 export async function saveConfig(config: AppConfig) {
   const validated = validateConfig(config)
-  await atomicJson(configPath, validated)
-  return validated
+  await ensureProviderTransactionRecovered()
+  return serializeWrite(async () => {
+    await atomicJson(configPath, validated)
+    return validated
+  })
+}
+
+/** Persist the provider configuration and its secrets as one recoverable
+ * transaction. A crash between the two atomic replacements leaves the journal
+ * behind; the next read completes the same transaction before returning data. */
+export async function saveConfigAndSecrets(config: AppConfig, secrets: Record<string, string>) {
+  const validatedConfig = validateConfig(config)
+  const validatedSecrets = validateSecrets(secrets)
+  await ensureProviderTransactionRecovered()
+  return serializeWrite(async () => {
+    await atomicJson(providerTransactionPath, {
+      version: 1,
+      config: validatedConfig,
+      secrets: validatedSecrets,
+    })
+    try {
+      await atomicJson(configPath, validatedConfig)
+      await atomicJson(secretsPath, validatedSecrets)
+      await unlink(providerTransactionPath)
+      return validatedConfig
+    } catch (error) {
+      // A recoverable interruption is completed before the request returns, so
+      // callers never receive an error for a transaction that this process can
+      // still commit. A crash leaves the same journal for the next startup.
+      recoveryPromise = undefined
+      try {
+        await ensureProviderTransactionRecovered()
+        return validatedConfig
+      } catch (recoveryError) {
+        throw new AggregateError([error, recoveryError], 'Could not persist the provider configuration transaction.')
+      }
+    }
+  })
 }
 
 export async function resetConfig(options: { clearSecrets?: boolean } = {}) {
   const next = structuredClone(defaultConfig)
-  await atomicJson(configPath, next)
-  if (options.clearSecrets) await atomicJson(secretsPath, {})
+  if (options.clearSecrets) await saveConfigAndSecrets(next, {})
+  else await saveConfig(next)
   return next
 }
 
 export async function getSecrets(): Promise<Record<string, string>> {
   await ensureRoot()
+  await ensureProviderTransactionRecovered()
   let source: string
   try {
     source = await readFile(secretsPath, 'utf8')
@@ -158,20 +245,20 @@ export async function getSecrets(): Promise<Record<string, string>> {
     return {}
   }
   try {
-    const value = JSON.parse(source) as unknown
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected a JSON object')
-    if (Object.values(value).some((secret) => typeof secret !== 'string')) throw new Error('Expected every secret value to be a string')
-    return value as Record<string, string>
+    return validateSecrets(JSON.parse(source) as unknown)
   } catch (error) {
     throw await invalidJsonError(secretsPath, 'Local secrets file', error)
   }
 }
 
 export async function setSecret(key: string, value: string) {
-  const secrets = await getSecrets()
-  if (value) secrets[key] = value
-  else delete secrets[key]
-  await atomicJson(secretsPath, secrets)
+  await ensureProviderTransactionRecovered()
+  await serializeWrite(async () => {
+    const secrets = await getSecrets()
+    if (value) secrets[key] = value
+    else delete secrets[key]
+    await atomicJson(secretsPath, secrets)
+  })
 }
 
 export function getByPath(object: unknown, dotted: string): unknown {

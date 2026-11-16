@@ -32,7 +32,7 @@ export function lookupCacheKey(input: {
   interfaceLocale: string
 }) {
   return aiCacheDigest({
-    version: 1,
+    version: 2,
     operation: 'term_lookup',
     term: input.term,
     sentence: input.sentence,

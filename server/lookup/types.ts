@@ -35,6 +35,14 @@ export interface ProviderLookupResult {
   presentation?: LookupPresentation
 }
 
+export type LookupAttemptStage = 'direct_read' | 'provider_fetch' | 'provider_search'
+
+/** Safe, non-secret diagnostics retained when one lookup layer fails. */
+export interface LookupDiagnostic {
+  stage: LookupAttemptStage
+  code: string
+}
+
 export interface LookupOutcome {
   kind: LookupOutcomeKind
   subject: string
@@ -42,6 +50,7 @@ export interface LookupOutcome {
   items: LookupItem[]
   note: string
   presentation?: LookupPresentation
+  diagnostics?: LookupDiagnostic[]
 }
 
 export interface LookupRequest {

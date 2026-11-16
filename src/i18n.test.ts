@@ -24,6 +24,59 @@ test('all ten interface languages contain the same non-empty UI keys', () => {
   }
 })
 
+test('pronunciation button copy switches correctly in all ten interface languages', () => {
+  const i18n = createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: false, messages: buildMessages() })
+  const expected = {
+    'zh-CN': '播放发音',
+    'en-US': 'Play pronunciation',
+    'es-419': 'Escuchar pronunciación',
+    'fr-FR': 'Écouter la prononciation',
+    'ja-JP': '発音を聞く',
+    'de-DE': 'Aussprache anhören',
+    'ko-KR': '발음 듣기',
+    'it-IT': 'Ascolta la pronuncia',
+    'pt-BR': 'Ouvir pronúncia',
+    'hi-IN': 'उच्चारण सुनें',
+  } as const
+
+  for (const locale of UI_LOCALES) {
+    i18n.global.locale.value = locale
+    assert.equal(i18n.global.t('speech.play'), expected[locale], locale)
+  }
+})
+
+test('read-aloud settings copy is complete and interpolates the language in every interface language', () => {
+  const messages = buildMessages()
+  const keys = [
+    'settings.pronunciationTitle',
+    'settings.pronunciationHelp',
+    'settings.speechRate',
+    'settings.speechRateValue',
+    'settings.speechRateHelp',
+    'settings.speechSlower',
+    'settings.speechFaster',
+    'settings.speechUnavailable',
+    'settings.speechRecommendationMac',
+    'settings.speechRecommendationWindows',
+    'settings.speechRecommendationLinux',
+    'settings.speechRecommendationOther',
+  ]
+  const i18n = createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: false, messages })
+  for (const locale of UI_LOCALES) {
+    const localized = flatten(messages[locale])
+    for (const key of keys) assert.ok(localized[key]?.trim(), `${locale}: ${key}`)
+    i18n.global.locale.value = locale
+    const unavailable = i18n.global.t('settings.speechUnavailable', { language: 'English' })
+    assert.match(unavailable, /English/u, locale)
+    assert.doesNotMatch(unavailable, /\{language\}/u, locale)
+  }
+
+  const chinese = Object.values(flatten(messages['zh-CN'])).join('\n')
+  const english = Object.values(flatten(messages['en-US'])).join('\n')
+  assert.doesNotMatch(chinese, /可信音色/u)
+  assert.doesNotMatch(english, /trusted voice/iu)
+})
+
 test('memory copy stays category-neutral and German memory terminology is consistent', () => {
   const messages = buildMessages()
   for (const locale of UI_LOCALES) {

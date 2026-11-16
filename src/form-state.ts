@@ -1,4 +1,5 @@
 import type { Provider, Settings } from './types'
+import { DEFAULT_SPEECH_RATE } from '../shared/speech'
 
 type LearningPreferences = Pick<Settings, 'ui' | 'learning'>
 
@@ -10,6 +11,7 @@ export function learningPreferencesKey(value: LearningPreferences) {
     value.learning.targetLanguage,
     value.learning.proficiency,
     value.learning.correctionLevel,
+    value.learning.speechRate ?? DEFAULT_SPEECH_RATE,
   ])
 }
 

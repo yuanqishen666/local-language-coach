@@ -44,6 +44,8 @@ export interface AppConfig {
     targetLanguageCode: string
     proficiency: string
     correctionLevel: 'light' | 'balanced' | 'intensive'
+    /** Optional so configurations created before pronunciation settings remain loadable. */
+    speechRate?: number
   }
   llm: { defaultProvider: string; temperature: number }
   webLookup: {

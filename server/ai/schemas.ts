@@ -35,6 +35,7 @@ export const lookupDecisionSchema = z.object({
  * Keeping this separate prevents reply fluency from crowding out language
  * feedback and durable-memory extraction. */
 export const turnAnalysisSchema = z.object({
+  languageMatch: z.enum(['target', 'non_target', 'mixed']),
   lookup: lookupDecisionSchema,
   reconstruction: reconstructionSchema.nullable(),
   corrections: z.array(correctionSchema),
@@ -161,7 +162,7 @@ export const termLookupSchema = z.object({
   contextMeaning: z.string(),
   forms: z.array(z.object({ label: z.string(), value: z.string() })),
   senses: z.array(z.object({ meaning: z.string(), example: z.string(), translation: z.string() })),
-  collocations: z.array(z.string()),
+  collocations: z.array(z.object({ phrase: z.string(), meaning: z.string() })),
   register: z.string(),
   regionalNotes: z.string(),
 })

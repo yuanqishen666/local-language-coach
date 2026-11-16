@@ -4,6 +4,17 @@ import type { LookupItem } from './types.js'
 
 const blockedNames = new Set(['localhost', 'localhost.localdomain'])
 
+/** Prefer GitHub's plain-text endpoint over scraping the much larger blob UI. */
+export function preferredPublicUrl(input: string) {
+  const url = new URL(input)
+  const hostname = url.hostname.toLocaleLowerCase()
+  const match = /^\/([^/]+)\/([^/]+)\/blob\/(.+)$/u.exec(url.pathname)
+  if ((hostname === 'github.com' || hostname === 'www.github.com') && match) {
+    return `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${match[3]}`
+  }
+  return url.toString()
+}
+
 function blockedIpv4(address: string) {
   const parts = address.split('.').map(Number)
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true
@@ -73,7 +84,10 @@ async function limitedBody(response: Response, limit = 1_000_000) {
 }
 
 export async function readPublicUrl(input: string, timeoutMs: number): Promise<LookupItem> {
-  let current = await assertPublicUrl(input)
+  const requested = new URL(input)
+  const preferred = preferredPublicUrl(requested.toString())
+  const transformed = preferred !== requested.toString()
+  let current = await assertPublicUrl(preferred)
   for (let redirects = 0; redirects <= 3; redirects += 1) {
     const response = await fetch(current, {
       redirect: 'manual',
@@ -92,7 +106,16 @@ export async function readPublicUrl(input: string, timeoutMs: number): Promise<L
     const content = readableText(body, contentType)
     if (!content) throw new Error('EMPTY_PAGE')
     const title = /<title[^>]*>([\s\S]*?)<\/title>/iu.exec(body)?.[1]
-    return { title: title ? decodeHtml(title).replace(/\s+/gu, ' ').trim() : current.hostname, url: current.toString(), summary: content.slice(0, 600), content }
+    const requestedParts = requested.pathname.split('/').filter(Boolean)
+    const fallbackTitle = transformed && requestedParts.length >= 5
+      ? `${requestedParts.at(-1)} · ${requestedParts[0]}/${requestedParts[1]}`
+      : current.hostname
+    return {
+      title: title ? decodeHtml(title).replace(/\s+/gu, ' ').trim() : fallbackTitle,
+      url: transformed ? requested.toString() : current.toString(),
+      summary: content.slice(0, 600),
+      content,
+    }
   }
   throw new Error('TOO_MANY_REDIRECTS')
 }

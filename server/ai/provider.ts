@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto'
-import type { AppConfig, ProviderCapability, ProviderConfig, StructuredOutputMode } from '../types.js'
+import type { AppConfig, ProviderConfig, StructuredOutputMode } from '../types.js'
 import { getConfig, getSecrets } from '../services/config.js'
+import { issueProviderSetupReceipt } from '../services/provider-setup-receipt.js'
 import { parseModelJson } from '../utils/json.js'
 import { coachTurnSchema, providerCertificationSchema, responseJsonSchema } from './schemas.js'
 import { probeProviderLookup } from '../lookup/provider-tools.js'
@@ -40,49 +40,6 @@ export interface ProviderModelOption {
 }
 
 export const STRUCTURED_CONTRACT_VERSION = 7
-
-const pendingCertifications = new Map<string, {
-  providerId: string
-  capability: ProviderCapability
-  keyHash: string
-  expiresAt: number
-}>()
-
-const pendingModelDiscoveries = new Map<string, {
-  providerId: string
-  modelIds: Set<string>
-  keyHash: string
-  expiresAt: number
-}>()
-
-function secretHash(value: string) {
-  return createHash('sha256').update(value).digest('hex')
-}
-
-export async function consumeProviderCertification(providerId: string, token: string, capability: ProviderCapability, enteredKey = '') {
-  const pending = pendingCertifications.get(token)
-  pendingCertifications.delete(token)
-  if (!pending || pending.expiresAt < Date.now() || pending.providerId !== providerId) return false
-  if (JSON.stringify(pending.capability) !== JSON.stringify(capability)) return false
-  const config = await getConfig()
-  const provider = config.providers.find((item) => item.id === providerId)
-  if (!provider) return false
-  const secrets = await getSecrets()
-  const key = enteredKey.trim() || (provider.apiKeySecret ? secrets[provider.apiKeySecret] || '' : '')
-  return Boolean(key && secretHash(key) === pending.keyHash)
-}
-
-export async function consumeProviderModelDiscovery(providerId: string, token: string, model: string, enteredKey = '') {
-  const pending = pendingModelDiscoveries.get(token)
-  pendingModelDiscoveries.delete(token)
-  if (!pending || pending.expiresAt < Date.now() || pending.providerId !== providerId || !pending.modelIds.has(model)) return false
-  const config = await getConfig()
-  const provider = config.providers.find((item) => item.id === providerId)
-  if (!provider) return false
-  const secrets = await getSecrets()
-  const key = enteredKey.trim() || (provider.apiKeySecret ? secrets[provider.apiKeySecret] || '' : '')
-  return Boolean(key && secretHash(key) === pending.keyHash)
-}
 
 export function structuredOutputModes(provider: Pick<ProviderConfig, 'id' | 'kind'>): StructuredOutputMode[] {
   if (provider.id === 'deepseek') return ['json_object', 'prompt_json']
@@ -396,6 +353,14 @@ export async function getModelClient(providerId?: string, overrides: ProviderTes
 export async function testProvider(providerId: string, overrides: ProviderTestOverrides = {}) {
   const { provider, key } = await resolveProvider(providerId, overrides)
   if (!provider.model) throw new ModelConfigurationError('Complete the model name before testing')
+  const officialModels = await fetchProviderModelOptions(provider, key)
+  if (!officialModels.some((model) => model.id === provider.model)) {
+    throw new ProviderRequestError(
+      '当前模型不在这把 API Key 可用的官方模型列表中。请刷新列表并重新选择。',
+      409,
+      'MODEL_NOT_DISCOVERED',
+    )
+  }
   const client = await getModelClient(providerId, overrides)
   const schema = responseJsonSchema(coachTurnSchema)
   const modes = structuredOutputModes(provider)
@@ -490,14 +455,8 @@ export async function testProvider(providerId: string, overrides: ProviderTestOv
         contractVersion: STRUCTURED_CONTRACT_VERSION,
         testedAt: new Date().toISOString(),
       }
-      const certificationToken = randomUUID()
-      pendingCertifications.set(certificationToken, {
-        providerId,
-        capability,
-        keyHash: secretHash(key),
-        expiresAt: Date.now() + 10 * 60_000,
-      })
-      return { ok: true, message: provider.name + ' · ' + provider.model + ' 已通过自然对话测试', model: provider.model, capability, certificationToken }
+      const setupReceipt = await issueProviderSetupReceipt(providerId, provider.model, key, capability)
+      return { ok: true, message: provider.name + ' · ' + provider.model + ' 已通过自然对话测试', model: provider.model, capability, setupReceipt }
     } catch (error) {
       if (error instanceof ProviderRequestError && !['PROVIDER_INVALID_REQUEST', 'PROVIDER_INVALID_RESPONSE', 'PROVIDER_EMPTY_RESPONSE'].includes(error.code)) throw error
       lastError = error
@@ -506,8 +465,7 @@ export async function testProvider(providerId: string, overrides: ProviderTestOv
   throw new ProviderRequestError(lastError instanceof Error ? '模型已经连上了，但测试回复不完整：' + lastError.message : '模型已经连上了，但测试回复不完整。', 422, 'PROVIDER_TEST_FAILED')
 }
 
-export async function listProviderModels(providerId: string, overrides: ProviderTestOverrides = {}) {
-  const { provider, key } = await resolveProvider(providerId, overrides)
+async function fetchProviderModelOptions(provider: ProviderConfig, key: string) {
   const baseUrl = provider.baseUrl.replace(/\/$/, '')
   let response: Response
 
@@ -526,15 +484,12 @@ export async function listProviderModels(providerId: string, overrides: Provider
   }
 
   const json = await checkedJson(response)
-  const models = normalizeProviderModelOptions(provider, json)
-  const discoveryToken = randomUUID()
-  pendingModelDiscoveries.set(discoveryToken, {
-    providerId,
-    modelIds: new Set(models.map((model) => model.id)),
-    keyHash: secretHash(key),
-    expiresAt: Date.now() + 10 * 60_000,
-  })
-  return { models, discoveryToken }
+  return normalizeProviderModelOptions(provider, json)
+}
+
+export async function listProviderModels(providerId: string, overrides: ProviderTestOverrides = {}) {
+  const { provider, key } = await resolveProvider(providerId, overrides)
+  return { models: await fetchProviderModelOptions(provider, key) }
 }
 
 function positiveInteger(value: unknown) {

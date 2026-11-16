@@ -194,6 +194,7 @@ export function normalizeTurnAnalysis(value: unknown, latestUser: string) {
   const source = record(value)
   const reconstruction = record(source.reconstruction)
   const reconstructionType = text(reconstruction.type)
+  const sourceLanguageMatch = text(source.languageMatch)
   const corrections = (Array.isArray(source.corrections) ? source.corrections : []).map((item) => {
     const correction = record(item)
     const severity = text(correction.severity)
@@ -209,20 +210,26 @@ export function normalizeTurnAnalysis(value: unknown, latestUser: string) {
     : ''
   const reconstructionImproved = text(reconstruction.improved || stringReconstruction)
   const normalizedStringReconstruction = Boolean(stringReconstruction && !reconstruction.improved)
+  const normalizedReconstruction = reconstructionImproved
+    ? {
+        type: (['completion', 'translation', 'correction', 'optional'].includes(reconstructionType)
+          ? reconstructionType
+          : normalizedStringReconstruction ? 'completion' : 'correction') as 'completion' | 'translation' | 'correction' | 'optional',
+        original: normalizedStringReconstruction ? latestUser : text(reconstruction.original),
+        improved: reconstructionImproved,
+        explanation: normalizedStringReconstruction
+          ? corrections[0]?.explanation || ''
+          : text(reconstruction.explanation),
+      }
+    : null
+  const languageMatch = (['target', 'non_target', 'mixed'].includes(sourceLanguageMatch)
+    ? sourceLanguageMatch
+    : normalizedReconstruction ? 'non_target' : undefined) as 'target' | 'non_target' | 'mixed'
+  if (normalizedReconstruction && languageMatch !== 'target') normalizedReconstruction.original = latestUser
   return {
+    languageMatch,
     lookup: normalizeLookupDecision(source.lookup),
-    reconstruction: reconstructionImproved
-      ? {
-          type: (['completion', 'translation', 'correction', 'optional'].includes(reconstructionType)
-            ? reconstructionType
-            : normalizedStringReconstruction ? 'completion' : 'correction') as 'completion' | 'translation' | 'correction' | 'optional',
-          original: normalizedStringReconstruction ? latestUser : text(reconstruction.original),
-          improved: reconstructionImproved,
-          explanation: normalizedStringReconstruction
-            ? corrections[0]?.explanation || ''
-            : text(reconstruction.explanation),
-        }
-      : null,
+    reconstruction: normalizedReconstruction,
     corrections,
   }
 }
@@ -342,18 +349,21 @@ export function naturalReplyIssues(reply: string, messages: StoredConversationMe
   return issues
 }
 
-export function requiresInterfaceLanguageRescue(input: string, interfaceLocale: string, targetCode: string) {
-  const interfaceCode = normalizeUiLocale(interfaceLocale).split('-')[0]
-  if (interfaceCode === targetCode) return false
-  if (interfaceCode === 'zh') {
-    if (targetCode === 'ja') return false
-    return /[\u3400-\u9fff]/u.test(input)
-  }
-  if (interfaceCode === 'ja') return /[\u3040-\u30ff]/u.test(input)
-  if (interfaceCode === 'ko') return /[\uac00-\ud7af]/u.test(input)
-  if (interfaceCode === 'hi') return /[\u0900-\u097f]/u.test(input)
-  if (interfaceCode === 'en' && ['zh', 'ja', 'ko', 'hi'].includes(targetCode)) return /[A-Za-z]{2,}/u.test(input)
-  return false
+export function likelyNeedsTargetLanguageRescue(input: string, targetCode: string) {
+  const normalized = input.normalize('NFC')
+    .replace(/```[\s\S]*?```|`[^`]*`/gu, ' ')
+    .replace(/https?:\/\/\S+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+  return Boolean(normalized) && !languageNeutral(normalized) && !matchesExpectedConversationLanguage(normalized, targetCode)
+}
+
+export function languageFeedbackConsistent(
+  value: { languageMatch: 'target' | 'non_target' | 'mixed'; reconstruction: unknown },
+  nonTargetDetected = false,
+) {
+  if (nonTargetDetected && value.languageMatch === 'target') return false
+  return value.languageMatch === 'target' ? !value.reconstruction : Boolean(value.reconstruction)
 }
 
 function selectedProvider(config: Awaited<ReturnType<typeof getConfig>>) {
@@ -468,7 +478,7 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
   const client = await getModelClient()
   const provider = selectedProvider(config)
   const latestUser = [...input.messages].reverse().find((message) => message.role === 'user')?.content || ''
-  const rescueRequired = requiresInterfaceLanguageRescue(latestUser, config.ui.locale, config.learning.targetLanguageCode)
+  const nonTargetDetected = likelyNeedsTargetLanguageRescue(latestUser, config.learning.targetLanguageCode)
   const explicitDurableClauses = explicitMemoryClauses(latestUser)
   const memoryCatalog = input.memories.slice(0, 100)
   const memoryKeys = memoryCatalog.map((memory) => text(memory.key)).filter(Boolean)
@@ -536,29 +546,30 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
     [memoryAnalysis.dialoguePlan.anchorMeaning, memoryAnalysis.dialoguePlan.topic, memoryAnalysis.dialoguePlan.branch].join(' '),
   )
   const turnAnalysis = await generateStructured(client, [
-    { role: 'system', content: turnAnalysisSystem(config, rescueRequired, analysisRelevantMemories) },
+    { role: 'system', content: turnAnalysisSystem(config, nonTargetDetected, analysisRelevantMemories) },
     ...analysisHistory,
   ], {
     name: 'turn_analysis',
     schema: turnAnalysisSchema,
-    hint: '{"lookup":{"action":"reply","parts":[{"text":"learner intent","needsLookup":false,"reason":"stable","subject":"exact subject"}],"query":"","locator":null},"reconstruction":null,"corrections":[]}',
+    hint: '{"languageMatch":"target","lookup":{"action":"reply","parts":[{"text":"learner intent","needsLookup":false,"reason":"stable","subject":"exact subject"}],"query":"","locator":null},"reconstruction":null,"corrections":[]}',
     temperature: 0,
     attempts: 3,
     maxOutputTokens: provider.maxOutputTokens,
-    retryHint: 'Return the complete language-and-lookup analysis JSON. reconstruction must be an object with type, original, improved, and explanation, never a plain string. Recheck the latest learner message for guessable spelling or word-choice errors and every information need. Keep explanations concise.',
+    retryHint: `Return the complete language-and-lookup analysis JSON. Classify languageMatch against ${config.learning.targetLanguage}, not against the interface language. Any non-target or mixed turn requires a complete target-language reconstruction object with type, original, improved, and explanation. Recheck guessable spelling or word-choice errors and every information need.`,
     normalize: (value) => normalizeTurnAnalysis(value, latestUser),
     usable: (value) => Boolean(
       value.lookup.parts.length > 0 &&
       value.lookup.parts.every((part) => part.subject && (part.reason !== 'unknown' || value.lookup.action === 'clarify')) &&
       (value.lookup.action !== 'lookup' || (value.lookup.parts.some((part) => part.needsLookup) && (value.lookup.query || value.lookup.locator))) &&
       (value.lookup.action !== 'reply' || value.lookup.parts.every((part) => !part.needsLookup)) &&
-      (!rescueRequired || value.reconstruction) &&
+      languageFeedbackConsistent(value, nonTargetDetected) &&
       interfaceOutputMatches(config, [
         value.reconstruction?.explanation,
         value.corrections.map((correction) => correction.explanation),
       ]),
     ),
   })
+  const rescueRequired = turnAnalysis.languageMatch !== 'target'
   const lookupDecision = turnAnalysis.lookup
   const dialoguePolicy = deriveDialoguePolicy(memoryAnalysis.dialoguePlan, dynamics, lookupDecision, input.state)
 
@@ -821,7 +832,7 @@ export async function lookupTerm(input: { term: string; sentence: string; previo
   ], {
     name: 'term_lookup',
     schema: termLookupSchema,
-    hint: '{"term":"","lemma":"","partOfSpeech":"","pronunciation":"","contextMeaning":"","forms":[],"senses":[{"meaning":"","example":"","translation":""}],"collocations":[],"register":"","regionalNotes":""}',
+    hint: '{"term":"","lemma":"","partOfSpeech":"","pronunciation":"","contextMeaning":"","forms":[],"senses":[{"meaning":"","example":"","translation":""}],"collocations":[{"phrase":"","meaning":""}],"register":"","regionalNotes":""}',
     temperature: 0.2,
     attempts: 2,
     maxOutputTokens: provider.maxOutputTokens,
@@ -837,25 +848,35 @@ export async function lookupTerm(input: { term: string; sentence: string; previo
         contextMeaning: text(source.contextMeaning || source.meaning),
         forms: rawForms.map((item) => ({ label: text(record(item).label), value: text(record(item).value) })).filter((item) => item.value),
         senses: rawSenses.map((item) => ({ meaning: text(record(item).meaning), example: text(record(item).example), translation: text(record(item).translation) })).filter((item) => item.meaning || item.example),
-        collocations: strings(source.collocations),
+        collocations: (Array.isArray(source.collocations) ? source.collocations : []).map((item) => {
+          if (typeof item === 'string') return { phrase: text(item), meaning: '' }
+          const collocation = record(item)
+          return {
+            phrase: text(collocation.phrase || collocation.collocation || collocation.text),
+            meaning: text(collocation.meaning || collocation.definition || collocation.translation),
+          }
+        }).filter((item) => item.phrase),
         register: text(source.register),
         regionalNotes: text(source.regionalNotes),
       }
     },
-    retryHint: `Write every explanation, definition, label, note, and example translation only in ${config.ui.locale}. Examples and the studied expression remain in ${config.learning.targetLanguage}.`,
+    retryHint: `Write every explanation, definition, collocation meaning, label, note, and example translation only in ${config.ui.locale}. Examples, collocation phrases, and the studied expression remain in ${config.learning.targetLanguage}. Every collocation must include both phrase and meaning.`,
     usable: (value) => Boolean(value.contextMeaning && interfaceOutputMatches(config, [
       value.partOfSpeech,
       value.contextMeaning,
       value.forms.map((form) => form.label),
       value.senses.flatMap((sense) => [sense.meaning, sense.translation]),
+      value.collocations.map((collocation) => collocation.meaning),
       value.register,
       value.regionalNotes,
-    ])),
+    ]) && value.collocations.every((collocation) => collocation.phrase && collocation.meaning) &&
+      targetOutputMatches(config, value.collocations.map((collocation) => collocation.phrase))),
   })
 }
 
 export async function translateMessage(content: string, setup: ConversationSetup | null, interfaceLocale?: string) {
   const config = await getRequestConfig(interfaceLocale)
+  if (normalizeUiLocale(config.ui.locale).split('-')[0] === config.learning.targetLanguageCode) return content.trim()
   const client = await getModelClient()
   const provider = selectedProvider(config)
   const result = await generateStructured(client, [
