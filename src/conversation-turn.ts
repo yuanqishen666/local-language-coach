@@ -52,8 +52,19 @@ export function completeOptimisticTurn(
     meta: userMessage.meta || {},
     status: "complete",
   };
+  const existingAssistantIndex = messages.findIndex(
+    (message) => message.id === assistantMessage.id,
+  );
 
   if (optimisticIndex >= 0) {
+    if (existingAssistantIndex >= 0) {
+      messages.splice(optimisticIndex, 1, completedUserMessage);
+      const currentAssistantIndex = messages.findIndex(
+        (message) => message.id === assistantMessage.id,
+      );
+      if (currentAssistantIndex >= 0) messages.splice(currentAssistantIndex, 1, assistantMessage);
+      return;
+    }
     messages.splice(
       optimisticIndex,
       1,
@@ -63,6 +74,7 @@ export function completeOptimisticTurn(
     return;
   }
 
+  if (existingAssistantIndex >= 0) return;
   messages.push(completedUserMessage, assistantMessage);
 }
 

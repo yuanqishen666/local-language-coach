@@ -541,6 +541,44 @@ app.patch<{ Params: { id: string }; Body: { archived: boolean } }>('/api/convers
   return { ok: true, status: request.body.archived ? 'archived' : 'active' }
 })
 
+function conversationTurnMessage(message: Record<string, any>) {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    clientMessageId: message.client_message_id || undefined,
+    status: message.status,
+    meta: safeJson(message.meta_json, {}),
+    createdAt: message.created_at,
+  }
+}
+
+function assertMatchingTurnContent(existing: Record<string, any> | undefined, content: string) {
+  if (!existing || existing.content === content) return
+  throw Object.assign(new Error('This send identifier is already bound to different message content.'), {
+    statusCode: 409,
+    code: 'CLIENT_MESSAGE_ID_CONFLICT',
+  })
+}
+
+app.get<{ Params: { id: string; clientMessageId: string } }>('/api/conversations/:id/turns/:clientMessageId', async (request) => {
+  const userMessage = row<Record<string, any>>(
+    'SELECT * FROM messages WHERE conversation_id = ? AND client_message_id = ? AND role = ?',
+    request.params.id,
+    request.params.clientMessageId,
+    'user',
+  )
+  if (!userMessage) return { status: 'missing', clientMessageId: request.params.clientMessageId }
+  const assistantMessage = row<Record<string, any>>('SELECT * FROM messages WHERE reply_to_message_id = ?', userMessage.id)
+  const status = ['pending', 'failed', 'complete'].includes(userMessage.status) ? userMessage.status : 'failed'
+  return {
+    status,
+    clientMessageId: request.params.clientMessageId,
+    userMessage: conversationTurnMessage(userMessage),
+    ...(assistantMessage ? { assistantMessage: conversationTurnMessage(assistantMessage) } : {}),
+  }
+})
+
 app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: string; interfaceLocale?: string } }>('/api/conversations/:id/messages', async (request) => {
   const content = request.body.content?.trim()
   if (!content) throw Object.assign(new Error('Message cannot be empty'), { statusCode: 400 })
@@ -550,10 +588,13 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
   const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
   const clientMessageId = request.body.clientMessageId?.trim() || nanoid()
   const inFlightKey = request.params.id + ':' + clientMessageId
+  const submittedExisting = row<Record<string, any>>('SELECT * FROM messages WHERE conversation_id = ? AND client_message_id = ?', request.params.id, clientMessageId)
+  assertMatchingTurnContent(submittedExisting, content)
   const running = inFlightTurns.get(inFlightKey)
   if (running) return running
   const task = (async () => {
     const existing = row<Record<string, any>>('SELECT * FROM messages WHERE conversation_id = ? AND client_message_id = ?', request.params.id, clientMessageId)
+    assertMatchingTurnContent(existing, content)
     if (existing?.status === 'complete') {
       const assistant = row<Record<string, any>>('SELECT * FROM messages WHERE reply_to_message_id = ?', existing.id)
       if (assistant) {

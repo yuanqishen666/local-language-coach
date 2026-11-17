@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '../api'
@@ -9,10 +9,22 @@ import MessageBubble from '../components/MessageBubble.vue'
 import LookupDrawer from '../components/LookupDrawer.vue'
 import SpeakButton from '../components/SpeakButton.vue'
 import type { Conversation, Message, MessageMeta } from '../types'
-import { beginOptimisticTurn, completeOptimisticTurn, failOptimisticTurn } from '../conversation-turn'
-import { conversationDraftPrefix, guideToModelSettings, needsModelConfiguration } from '../model-access'
+import { beginOptimisticTurn, completeOptimisticTurn, failOptimisticTurn, type OptimisticTurn } from '../conversation-turn'
+import { guideToModelSettings, needsModelConfiguration } from '../model-access'
 import { shouldSubmitComposer } from '../composer-keydown'
 import { textLookupDirective as vTextLookup } from '../text-lookup'
+import {
+  clearConversationTurn,
+  readConversationTurn,
+  saveConversationTurn,
+  updateConversationTurnPhase,
+  type StoredConversationTurn,
+} from '../conversation-turn-storage'
+import {
+  conversationTurnRecoveryAction,
+  conversationTurnStatus,
+  type ConversationTurnStatusResponse,
+} from '../conversation-turn-recovery'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,8 +37,6 @@ const compositionActive = ref(false)
 const chat = ref<HTMLElement | null>(null)
 const error = ref('')
 const lookup = ref({ open: false, term: '', sentence: '' })
-const draftKey = computed(() => `${conversationDraftPrefix}${String(route.params.id)}`)
-const messageIdKey = computed(() => draftKey.value + '-message-id')
 const partnerInitial = computed(() => {
   const name = conversation.value?.setup?.partnerName || conversation.value?.setup?.partnerRole || t('product.name')
   return [...name.trim()][0] || '•'
@@ -51,24 +61,54 @@ const hasLearningRailContent = computed(() => {
   })
 })
 let loadVersion = 0
+let componentActive = true
+let activeSubmissionId = ''
+
+interface TurnResult {
+  userMessage: Message
+  assistantMessage: Message
+  status: 'active'
+}
 
 onMounted(async () => {
-  input.value = sessionStorage.getItem(draftKey.value) || ''
-  await load()
+  await openConversation(String(route.params.id))
 })
 
 watch(locale, async () => {
   lookup.value.open = false
-  await load()
+  await openConversation(String(route.params.id), { preserveInput: true })
 })
 
-async function load() {
+watch(() => route.params.id, async (next, previous) => {
+  if (next && next !== previous) await openConversation(String(next))
+})
+
+onUnmounted(() => {
+  componentActive = false
+  loadVersion += 1
+})
+
+function isCurrentConversation(conversationId: string) {
+  return componentActive && String(route.params.id) === conversationId
+}
+
+async function openConversation(conversationId: string, options: { preserveInput?: boolean } = {}) {
+  if (!options.preserveInput) input.value = ''
+  error.value = ''
+  sending.value = false
+  activeSubmissionId = ''
+  const loaded = await load(conversationId)
+  if (loaded) await reconcileStoredTurn(conversationId, loaded)
+}
+
+async function load(conversationId = String(route.params.id)) {
   const version = ++loadVersion
   const requestedLocale = String(locale.value)
-  const loaded = await api.get<Conversation>(`/conversations/${route.params.id}?interfaceLocale=${encodeURIComponent(requestedLocale)}`)
-  if (version !== loadVersion || requestedLocale !== String(locale.value)) return
+  const loaded = await api.get<Conversation>(`/conversations/${encodeURIComponent(conversationId)}?interfaceLocale=${encodeURIComponent(requestedLocale)}`)
+  if (version !== loadVersion || requestedLocale !== String(locale.value) || !isCurrentConversation(conversationId)) return
   conversation.value = loaded
   await scrollEnd()
+  return loaded
 }
 
 async function scrollEnd() {
@@ -78,6 +118,116 @@ async function scrollEnd() {
 
 function newClientMessageId() {
   return globalThis.crypto?.randomUUID?.() || `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function readStoredTurn(conversationId: string) {
+  return readConversationTurn(sessionStorage, conversationId, {
+    createId: newClientMessageId,
+    interfaceLocale: String(locale.value),
+  })
+}
+
+async function serverTurnStatus(turn: StoredConversationTurn) {
+  return api.get<ConversationTurnStatusResponse>(
+    `/conversations/${encodeURIComponent(turn.conversationId)}/turns/${encodeURIComponent(turn.clientMessageId)}`,
+  )
+}
+
+function finishSubmission(turn: StoredConversationTurn) {
+  if (activeSubmissionId !== turn.clientMessageId || !isCurrentConversation(turn.conversationId)) return
+  activeSubmissionId = ''
+  sending.value = false
+}
+
+async function completeStoredTurn(turn: StoredConversationTurn, result?: TurnResult, optimisticTurn?: OptimisticTurn) {
+  clearConversationTurn(sessionStorage, turn.conversationId, turn.clientMessageId)
+  if (!isCurrentConversation(turn.conversationId)) return
+  input.value = ''
+  error.value = ''
+  if (result && optimisticTurn && conversation.value?.id === turn.conversationId) {
+    completeOptimisticTurn(conversation.value.messages, {
+      localId: optimisticTurn.localId,
+      clientMessageId: turn.clientMessageId,
+    }, result.userMessage, result.assistantMessage)
+    conversation.value.status = 'active'
+    await scrollEnd().catch(() => undefined)
+  } else {
+    await load(turn.conversationId).catch(() => undefined)
+  }
+  finishSubmission(turn)
+}
+
+async function restoreStoredTurn(turn: StoredConversationTurn, value: unknown, optimisticTurn?: OptimisticTurn) {
+  updateConversationTurnPhase(sessionStorage, turn, 'retryable')
+  if (!isCurrentConversation(turn.conversationId)) return
+  input.value = turn.content
+  if (optimisticTurn) failOptimisticTurn(optimisticTurn.message)
+  if (needsModelConfiguration(value)) await guideToModelSettings(router, route.fullPath)
+  else error.value = turnErrorMessage(value)
+  finishSubmission(turn)
+}
+
+async function reconcileSubmissionError(turn: StoredConversationTurn, value: unknown, optimisticTurn: OptimisticTurn | undefined, allowReattach: boolean) {
+  let state: ConversationTurnStatusResponse | null = null
+  try { state = await serverTurnStatus(turn) }
+  catch { /* The original failure remains authoritative when status cannot be read. */ }
+
+  if (state?.status === 'complete') {
+    await completeStoredTurn(turn)
+    return
+  }
+  if (state?.status === 'pending' && allowReattach) {
+    await submitStoredTurn(turn, optimisticTurn, false)
+    return
+  }
+  await restoreStoredTurn(turn, value, optimisticTurn)
+}
+
+async function submitStoredTurn(turn: StoredConversationTurn, optimisticTurn?: OptimisticTurn, allowReattach = true) {
+  let result: TurnResult
+  try {
+    result = await api.post<TurnResult>(`/conversations/${encodeURIComponent(turn.conversationId)}/messages`, {
+      content: turn.content,
+      clientMessageId: turn.clientMessageId,
+      interfaceLocale: turn.interfaceLocale,
+    })
+  } catch (value: unknown) {
+    await reconcileSubmissionError(turn, value, optimisticTurn, allowReattach)
+    return
+  }
+  await completeStoredTurn(turn, result, optimisticTurn)
+}
+
+async function reconcileStoredTurn(conversationId: string, loaded: Conversation) {
+  const stored = readStoredTurn(conversationId)
+  if (!stored) return
+
+  let status = conversationTurnStatus(loaded.messages, stored.clientMessageId)
+  if (status === 'missing') {
+    try { status = (await serverTurnStatus(stored)).status }
+    catch { status = 'missing' }
+  }
+
+  const action = conversationTurnRecoveryAction(status)
+  if (action === 'clear') {
+    clearConversationTurn(sessionStorage, conversationId, stored.clientMessageId)
+    input.value = ''
+    return
+  }
+  if (action === 'restore') {
+    updateConversationTurnPhase(sessionStorage, stored, 'retryable')
+    input.value = stored.content
+    return
+  }
+
+  input.value = ''
+  sending.value = true
+  activeSubmissionId = stored.clientMessageId
+  const existing = loaded.messages.find((message) => message.role === 'user' && message.clientMessageId === stored.clientMessageId)
+  const optimisticTurn = existing
+    ? { localId: `local:${stored.clientMessageId}`, message: existing }
+    : beginOptimisticTurn(loaded.messages, stored.content, stored.clientMessageId, stored.createdAt)
+  await submitStoredTurn(stored, optimisticTurn)
 }
 
 function turnErrorMessage(value: unknown) {
@@ -106,51 +256,32 @@ function turnErrorMessage(value: unknown) {
 async function send() {
   const text = input.value.trim()
   if (!text || sending.value || !conversation.value) return
+  const conversationId = conversation.value.id
+  const requestedLocale = String(locale.value)
+  const returnTo = route.fullPath
+  const previous = readStoredTurn(conversationId)
+  const clientMessageId = previous?.content === text ? previous.clientMessageId : newClientMessageId()
+  const storedTurn: StoredConversationTurn = {
+    version: 1,
+    conversationId,
+    clientMessageId,
+    content: text,
+    interfaceLocale: requestedLocale,
+    phase: store.settings?.modelReady ? 'submitting' : 'retryable',
+    createdAt: previous?.content === text ? previous.createdAt : new Date().toISOString(),
+  }
+  saveConversationTurn(sessionStorage, storedTurn)
   if (!store.settings?.modelReady) {
-    sessionStorage.setItem(draftKey.value, text)
-    await guideToModelSettings(router, route.fullPath)
+    await guideToModelSettings(router, returnTo)
     return
   }
-  const clientMessageId = sessionStorage.getItem(messageIdKey.value) || newClientMessageId()
-  sessionStorage.setItem(draftKey.value, text)
-  sessionStorage.setItem(messageIdKey.value, clientMessageId)
   input.value = ''
   sending.value = true
+  activeSubmissionId = clientMessageId
   error.value = ''
   const optimisticTurn = beginOptimisticTurn(conversation.value.messages, text, clientMessageId)
   await scrollEnd().catch(() => undefined)
-  let result: { userMessage: Message; assistantMessage: Message; status: 'active' }
-  try {
-    result = await api.post<{ userMessage: Message; assistantMessage: Message; status: 'active' }>(`/conversations/${route.params.id}/messages`, {
-      content: text,
-      clientMessageId,
-      interfaceLocale: String(locale.value),
-    })
-  } catch (value: unknown) {
-    input.value = text
-    failOptimisticTurn(optimisticTurn.message)
-    if (needsModelConfiguration(value)) await guideToModelSettings(router, route.fullPath)
-    else error.value = turnErrorMessage(value)
-    sending.value = false
-    return
-  }
-
-  // The server has accepted the turn. From this point on, never restore the
-  // submitted text as a draft even if a local rendering step fails.
-  sessionStorage.removeItem(draftKey.value)
-  sessionStorage.removeItem(messageIdKey.value)
-  input.value = ''
-  try {
-    completeOptimisticTurn(conversation.value.messages, { localId: optimisticTurn.localId, clientMessageId }, result.userMessage, result.assistantMessage)
-    conversation.value.status = 'active'
-    await scrollEnd()
-  } catch {
-    // Recover the visible conversation from the committed server state without
-    // turning an already-sent message back into editable input.
-    await load().catch(() => undefined)
-  } finally {
-    sending.value = false
-  }
+  await submitStoredTurn(storedTurn, optimisticTurn)
 }
 
 function openLookup(term: string, sentence: string) { lookup.value = { open: true, term, sentence } }
