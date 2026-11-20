@@ -1,0 +1,104 @@
+/* 06 工作台 — a quiet productivity tool: white, hairlines, system type, compact rows, one orange. */
+html[data-lab='desk']{
+  --c-bg:#fff;--c-surface:#fff;--c-sunk:#f3f3f1;--c-field:#fff;
+  --c-ink:#1a1a19;--c-soft:#5f5e5a;--c-mute:#96958f;--c-line:#ecebe7;--c-line-strong:#dddcd6;
+  --c-accent:#e8590c;--c-on-accent:#fff;--c-accent-ink:#d9480f;--c-tint:rgba(232,89,12,.16);
+  --c-danger:#c92a2a;--c-danger-tint:rgba(201,42,42,.08);--c-ok:#2b8a3e;--c-ok-tint:rgba(43,138,62,.1);
+  --c-r:10px;--c-r-l:12px;--c-r-s:8px;--c-r-xs:6px;--c-r-btn:8px;
+  --c-font:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI','Noto Sans SC Variable','PingFang SC',system-ui,sans-serif;--c-display:var(--c-font);--c-mono:ui-monospace,'SF Mono',Menlo,monospace;
+  --c-weight:400;--c-btn-weight:500;--c-ctl-h:34px;
+  --c-title-size:24px;--c-title-weight:650;--c-title-track:-.02em;--c-title-lh:1.25;
+  --c-h2-size:13px;--c-h2-weight:600;--c-h2-ink:var(--c-soft);
+  --c-label-size:11.5px;--c-label-weight:500;--c-label-track:0;
+  --c-ease:cubic-bezier(.2,.8,.2,1);--c-spring:cubic-bezier(.2,.8,.2,1);--c-press:scale(.98);--c-lift:none;
+  --c-pop:0 0 0 1px rgba(0,0,0,.06),0 16px 48px rgba(0,0,0,.14);--c-card-border:1px solid var(--c-line);
+  --c-row-pad:8px 10px;--c-row-r:6px;--c-row-hover:var(--c-sunk);--c-row-on:var(--c-sunk);
+  --c-them-bg:transparent;--c-me-bg:var(--c-sunk);--c-me-ink:var(--c-ink);--c-mark:var(--c-accent);--c-mark-hot:rgba(232,89,12,.18);
+  --c-bubble-r:14px;--c-bubble-tail:14px;--c-bubble-pad:9px 14px;--c-chat-size:15px;--c-write-r:12px;--c-send-r:8px;
+  --c-page-w:940px;--c-page-pad:36px 40px 80px;--c-head-gap:22px;--c-sticky:20px;
+  --c-tip-r:6px;--c-toggle-on:var(--c-accent);--c-focus:var(--c-accent);
+  --c-who-bg:var(--c-sunk);--c-who-ink:var(--c-soft);
+}
+html[data-lab='desk'] .lab-tip{padding:5px 8px;font-weight:500;font-size:11.5px}
+
+/* compact controls */
+html[data-lab='desk'] .c-btn{padding:0 12px;font-size:13px;box-shadow:0 1px 1px rgba(0,0,0,.03)}
+html[data-lab='desk'] .c-btn:hover:not(:disabled):not(.primary):not(.solid){border-color:var(--c-line-strong);background:var(--c-sunk)}
+html[data-lab='desk'] .c-btn.small{height:28px;padding:0 10px;font-size:12.5px}
+html[data-lab='desk'] .c-btn.big{height:40px;padding:0 16px;font-size:14px}
+html[data-lab='desk'] .st-btn{height:32px;padding:0 12px}
+html[data-lab='desk'] .st-btn:hover:not(:disabled):not(.primary):not(.solid){border-color:var(--c-line-strong);background:var(--c-sunk)}
+html[data-lab='desk'] .st-foot .st-btn.primary{height:36px;padding:0 16px;font-size:13.5px}
+html[data-lab='desk'] :is(.c-textbtn,.c-speak){font-weight:500}
+html[data-lab='desk'] .c-seg{padding:2px}
+html[data-lab='desk'] .c-seg button{height:28px;padding:0 10px;font-weight:500}
+html[data-lab='desk'] .c-seg.quiet button{height:26px}
+html[data-lab='desk'] :is(.c-input,.st-select,.st-input){min-height:36px;padding:7px 10px;font-size:14px}
+html[data-lab='desk'] .c-field label,html[data-lab='desk'] .st-field>label,html[data-lab='desk'] .st-label,html[data-lab='desk'] .st-row label{font-size:12.5px;font-weight:500;color:var(--c-soft)}
+html[data-lab='desk'] .c-search{height:36px;padding:0 10px}
+html[data-lab='desk'] .c-search input{font-size:14px}
+html[data-lab='desk'] .c-tag{height:20px;padding:0 6px;border-radius:5px;font-weight:500}
+html[data-lab='desk'] .c-icon{width:28px;height:28px}
+
+/* dense rows */
+html[data-lab='desk'] .c-row{min-height:44px;gap:12px}
+html[data-lab='desk'] .c-row-main b{font-size:14px;font-weight:500}
+html[data-lab='desk'] .c-row-main{grid-auto-flow:column;grid-template-columns:auto minmax(0,1fr);align-items:baseline;gap:10px}
+html[data-lab='desk'] .c-row-main span{font-size:13px;color:var(--c-mute)}
+html[data-lab='desk'] .c-word{min-height:40px}
+html[data-lab='desk'] .c-word b{font-size:14px;font-weight:600}
+html[data-lab='desk'] .c-word span{font-size:13px}
+html[data-lab='desk'] .c-word.on{box-shadow:inset 2px 0 0 var(--c-accent)}
+html[data-lab='desk'] .c-group>summary{min-height:44px;padding:0 14px}
+html[data-lab='desk'] .c-group h2{font-size:13.5px;font-weight:600}
+html[data-lab='desk'] .c-group>.c-list{padding:0 6px 6px}
+html[data-lab='desk'] .c-mem{min-height:38px}
+html[data-lab='desk'] .c-mem p{font-size:14px}
+html[data-lab='desk'] .c-groups{gap:8px}
+
+/* conversation: their words are plain text, mine sit in a soft bubble */
+html[data-lab='desk'] .c-conv-bar{height:48px}
+html[data-lab='desk'] .c-conv-bar h1{font-size:14px;font-weight:600}
+html[data-lab='desk'] .c-turn.assistant .c-said{padding:4px 0 2px}
+html[data-lab='desk'] .c-who{width:26px;height:26px;margin-top:3px;border-radius:7px;font-size:12px;font-weight:600}
+html[data-lab='desk'] .c-avatar{width:32px;height:32px;border-radius:8px;font-size:13.5px}
+html[data-lab='desk'] .c-tools{margin-left:-8px}
+html[data-lab='desk'] .c-write{padding:6px 6px 6px 14px}
+html[data-lab='desk'] .c-write textarea{min-height:34px;padding:7px 0;font-size:15px}
+html[data-lab='desk'] .c-send{width:34px;height:34px}
+html[data-lab='desk'] .c-send:hover:not(:disabled){transform:none;background:var(--c-accent-ink)}
+html[data-lab='desk'] .c-note strong,html[data-lab='desk'] .c-fold>summary,html[data-lab='desk'] .c-senses b{font-weight:600}
+html[data-lab='desk'] .c-scene{padding:12px 14px}
+
+/* cards */
+html[data-lab='desk'] .c-own{padding:18px}
+html[data-lab='desk'] .c-own .c-btn{height:36px;min-width:0;padding:0 14px;font-size:13.5px}
+html[data-lab='desk'] .c-preset{min-height:104px;padding:14px}
+html[data-lab='desk'] .c-preset b{font-size:14px;font-weight:600}
+html[data-lab='desk'] .c-preset:hover:not(:disabled){border-color:var(--c-line-strong);background:var(--c-sunk)}
+html[data-lab='desk'] .c-person{padding:16px}
+html[data-lab='desk'] .c-person h3{font-size:15px;font-weight:600}
+html[data-lab='desk'] .c-card{padding:20px 24px 24px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+html[data-lab='desk'] .c-ask{font-size:clamp(20px,2vw,24px);font-weight:500}
+html[data-lab='desk'] .c-gap.filled{color:var(--c-accent-ink)}
+html[data-lab='desk'] .c-review{--c-page-w:720px}
+html[data-lab='desk'] .c-card-foot>.c-btn{height:40px;font-size:14px}
+html[data-lab='desk'] .c-grades button{padding:10px 12px}
+html[data-lab='desk'] .c-grades b{font-size:13.5px;font-weight:600}
+html[data-lab='desk'] .c-term{font-size:clamp(30px,4vw,40px)}
+html[data-lab='desk'] .c-entry{padding:20px}
+html[data-lab='desk'] .c-entry-head h2,html[data-lab='desk'] .c-sheet-title h2,html[data-lab='desk'] .c-answer-head h2{font-size:22px}
+html[data-lab='desk'] .c-empty h2{font-size:18px}
+html[data-lab='desk'] .c-leaf h1{font-size:clamp(24px,3vw,30px)}
+html[data-lab='desk'] .st{gap:32px}
+html[data-lab='desk'] .st-nav button{height:32px;padding:0 10px;font-size:13.5px;font-weight:500}
+html[data-lab='desk'] .st-choice button{height:36px;font-size:13.5px;font-weight:600}
+html[data-lab='desk'] .st-options button{min-height:38px;padding:8px 12px;font-size:13.5px}
+html[data-lab='desk'] .st-block h3,html[data-lab='desk'] .st-remote h3,html[data-lab='desk'] .st-provider h3,html[data-lab='desk'] .st-switch b{font-size:14px;font-weight:600}
+html[data-lab='desk'] .st-provider>header{min-height:56px;padding:8px 14px}
+html[data-lab='desk'] .st-logo{width:30px;height:30px;font-size:10.5px}
+@media (max-width:760px){
+  html[data-lab='desk']{--c-page-pad-s:20px 16px 110px}
+  html[data-lab='desk'] .c-row-main{grid-auto-flow:row;grid-template-columns:minmax(0,1fr);gap:2px}
+  html[data-lab='desk'] .c-tabs .on{color:var(--c-accent-ink)}
+}

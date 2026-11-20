@@ -3,7 +3,8 @@ import { computed, onBeforeUnmount, onMounted, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '../stores/app'
 import { browserSpeech, type SpeechFailure } from '../speech'
-import { normalizeSpeechRate } from '../../shared/speech'
+import { spokenRate } from '../level'
+import { displayTargetLanguage } from '../../shared/locales'
 import AppIcon from './AppIcon.vue'
 
 const props = withDefaults(defineProps<{
@@ -19,7 +20,7 @@ const props = withDefaults(defineProps<{
 })
 
 const store = useAppStore()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const generatedId = useId()
 const id = computed(() => props.speechId || `speech-${generatedId}`)
 const active = computed(() => browserSpeech.activeId.value === id.value)
@@ -33,7 +34,7 @@ const label = computed(() => active.value ? t('speech.stop') : t('speech.play'))
 
 function errorMessage(failure: SpeechFailure) {
   if (failure === 'unsupported') return t('speech.unsupported')
-  if (failure === 'voice-unavailable') return t('speech.voiceUnavailable')
+  if (failure === 'voice-unavailable') return t('speech.voiceUnavailable', { language: displayTargetLanguage(props.languageCode, locale.value) })
   return t('speech.failed')
 }
 
@@ -42,7 +43,7 @@ function toggle() {
     id: id.value,
     text: props.text,
     languageCode: props.languageCode,
-    rate: normalizeSpeechRate(store.settings?.learning.speechRate),
+    rate: spokenRate(store.settings?.learning.speechRate),
     onError: (failure) => store.notify(errorMessage(failure)),
   })
 }

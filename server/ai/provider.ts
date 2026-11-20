@@ -1,5 +1,6 @@
 import type { AppConfig, ProviderConfig, StructuredOutputMode } from '../types.js'
-import { getConfig, getSecrets } from '../services/config.js'
+import { CUSTOM_PROVIDER_ID, getConfig, getSecrets } from '../services/config.js'
+import { meterReply } from './usage-meter.js'
 import { issueProviderSetupReceipt } from '../services/provider-setup-receipt.js'
 import { parseModelJson } from '../utils/json.js'
 import { coachTurnSchema, providerCertificationSchema, responseJsonSchema } from './schemas.js'
@@ -43,8 +44,23 @@ export const STRUCTURED_CONTRACT_VERSION = 7
 
 export function structuredOutputModes(provider: Pick<ProviderConfig, 'id' | 'kind'>): StructuredOutputMode[] {
   if (provider.id === 'deepseek') return ['json_object', 'prompt_json']
+  // A compatible service may take a schema, only plain JSON, or neither; each is tried in turn.
+  if (provider.id === CUSTOM_PROVIDER_ID) return ['json_schema', 'json_object', 'prompt_json']
   return ['json_schema', 'prompt_json']
 }
+
+/** Whether the provider passed the conversation test with the model and address it has now. */
+export function capabilityCurrent(provider: Pick<ProviderConfig, 'id' | 'model' | 'baseUrl' | 'capability'> | undefined): boolean {
+  const capability = provider?.capability
+  if (!provider || !capability) return false
+  return capability.conversationReady === true &&
+    (capability.lookupReady === true || provider.id === CUSTOM_PROVIDER_ID) &&
+    capability.contractVersion === STRUCTURED_CONTRACT_VERSION &&
+    capability.model === provider.model &&
+    capability.baseUrl.replace(/\/$/, '') === provider.baseUrl.replace(/\/$/, '')
+}
+
+const sentText = (messages: ModelMessage[]) => messages.map((message) => message.content).join('\n')
 
 export class ModelConfigurationError extends Error {
   statusCode = 409
@@ -57,6 +73,11 @@ export class ModelConfigurationError extends Error {
 }
 
 export class ProviderRequestError extends Error {
+  /** What the model had written when the provider cut the answer off. Never sent to the client. */
+  partialContent?: string
+  /** Plain numbers the interface can show, such as the output limit that was hit. */
+  details?: Record<string, number | string>
+
   constructor(
     message: string,
     public statusCode: number,
@@ -66,6 +87,14 @@ export class ProviderRequestError extends Error {
     super(message)
     this.name = 'ProviderRequestError'
   }
+}
+
+function truncatedResponseError(partialContent: unknown) {
+  const error = new ProviderRequestError('模型接口报告本次生成触发了长度上限，返回内容不完整。', 422, 'PROVIDER_TRUNCATED_RESPONSE')
+  if (typeof partialContent === 'string' && partialContent.trim()) {
+    Object.defineProperty(error, 'partialContent', { value: partialContent, enumerable: false })
+  }
+  return error
 }
 
 const retryableStatuses = new Set([429, 500, 502, 503, 504])
@@ -80,7 +109,7 @@ function retryDelay(response: Response | undefined, attempt: number) {
   return Math.min(650 * 2 ** attempt + Math.floor(Math.random() * 250), 5_000)
 }
 
-async function fetchWithRetry(url: string, init: RequestInit, options: { timeoutMs?: number; retries?: number } = {}) {
+export async function fetchWithRetry(url: string, init: RequestInit, options: { timeoutMs?: number; retries?: number } = {}) {
   const timeoutMs = options.timeoutMs ?? 30_000
   const retries = options.retries ?? 0
   let lastNetworkError: unknown
@@ -122,7 +151,7 @@ export function providerErrorMessage(status: number, detail: string) {
   return [`模型服务返回错误（${status}）。${detail ? ` ${detail}` : ''}`, 502, 'PROVIDER_ERROR'] as const
 }
 
-async function checkedJson(response: Response) {
+export async function checkedJson(response: Response) {
   const text = await response.text()
   if (!response.ok) {
     let detail = ''
@@ -204,10 +233,17 @@ export function buildOpenAiPayload(provider: ProviderConfig, config: AppConfig, 
   return payload
 }
 
+/**
+ * Anthropic and Gemini describe a conversation as one the user starts. A scene opens with the
+ * partner's line, and a trimmed history can begin on either side, so a silent user turn goes in front.
+ */
+export function startingWithUser(messages: ModelMessage[]): ModelMessage[] {
+  return messages[0]?.role === 'assistant' ? [{ role: 'user', content: '…' }, ...messages] : messages
+}
+
 export function buildGeminiBody(provider: ProviderConfig, config: AppConfig, messages: ModelMessage[], options: GenerateOptions = {}) {
   const systemInstruction = messages.filter((message) => message.role === 'system').map((message) => message.content).join('\n')
-  const contents = messages
-    .filter((message) => message.role !== 'system')
+  const contents = startingWithUser(messages.filter((message) => message.role !== 'system'))
     .map((message) => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }] }))
   const generationConfig: Record<string, unknown> = {}
   const outputMode = options.outputMode || provider.capability?.outputMode || 'json_schema'
@@ -221,7 +257,7 @@ export function buildGeminiBody(provider: ProviderConfig, config: AppConfig, mes
 
 export function buildAnthropicBody(provider: ProviderConfig, config: AppConfig, messages: ModelMessage[], options: GenerateOptions = {}, outputMode: StructuredOutputMode = 'json_schema') {
   const system = messages.filter((message) => message.role === 'system').map((message) => message.content).join('\n')
-  const rest = messages.filter((message) => message.role !== 'system')
+  const rest = startingWithUser(messages.filter((message) => message.role !== 'system'))
   const body: Record<string, unknown> = {
     model: provider.model,
     system,
@@ -240,9 +276,7 @@ export function buildAnthropicBody(provider: ProviderConfig, config: AppConfig, 
 }
 
 function assertOpenAiCompletion(choice: any) {
-  if (choice?.finish_reason === 'length') {
-    throw new ProviderRequestError('模型接口报告本次生成触发了长度上限，返回内容不完整。', 422, 'PROVIDER_TRUNCATED_RESPONSE')
-  }
+  if (choice?.finish_reason === 'length') throw truncatedResponseError(choice?.message?.content)
   if (choice?.finish_reason === 'content_filter' || choice?.message?.refusal) {
     throw new ProviderRequestError('模型拒绝或中止了这次内容生成，请调整输入后重试。', 422, 'PROVIDER_REFUSAL')
   }
@@ -264,6 +298,7 @@ function openAiClient(provider: ProviderConfig, key: string, config: AppConfig, 
 
       const json = await checkedJson(response)
       const choice = json.choices?.[0]
+      meterReply(provider, json, sentText(messages), typeof choice?.message?.content === 'string' ? choice.message.content : '')
       assertOpenAiCompletion(choice)
       const content = choice?.message?.content
       if (typeof content !== 'string' || !content.trim()) throw new ProviderRequestError('模型返回了空内容，请重试。', 502, 'PROVIDER_EMPTY_RESPONSE')
@@ -283,9 +318,10 @@ function anthropicClient(provider: ProviderConfig, key: string, config: AppConfi
         body: JSON.stringify(buildAnthropicBody(provider, config, messages, options, outputMode)),
       }, options)
       const json = await checkedJson(response)
-      if (json.stop_reason === 'max_tokens') throw new ProviderRequestError('模型接口报告本次生成触发了长度上限，返回内容不完整。', 422, 'PROVIDER_TRUNCATED_RESPONSE')
-      if (json.stop_reason === 'refusal') throw new ProviderRequestError('模型拒绝了这次内容生成，请调整输入后重试。', 422, 'PROVIDER_REFUSAL')
       const content = json.content?.filter((item: any) => item.type === 'text').map((item: any) => item.text).join('\n') || ''
+      meterReply(provider, json, sentText(messages), content)
+      if (json.stop_reason === 'max_tokens') throw truncatedResponseError(content)
+      if (json.stop_reason === 'refusal') throw new ProviderRequestError('模型拒绝了这次内容生成，请调整输入后重试。', 422, 'PROVIDER_REFUSAL')
       if (!content.trim()) throw new ProviderRequestError('模型返回了空内容，请重试。', 502, 'PROVIDER_EMPTY_RESPONSE')
       return content
     },
@@ -305,18 +341,19 @@ function geminiClient(provider: ProviderConfig, key: string, config: AppConfig, 
       }, options)
       const json = await checkedJson(response)
       const candidate = json.candidates?.[0]
-      if (candidate?.finishReason === 'MAX_TOKENS') throw new ProviderRequestError('模型接口报告本次生成触发了长度上限，返回内容不完整。', 422, 'PROVIDER_TRUNCATED_RESPONSE')
+      const content = candidate?.content?.parts?.map((part: any) => part.text).join('\n') || ''
+      meterReply(provider, json, sentText(messages), content)
+      if (candidate?.finishReason === 'MAX_TOKENS') throw truncatedResponseError(content)
       if (candidate?.finishReason === 'SAFETY' || candidate?.finishReason === 'BLOCKLIST' || candidate?.finishReason === 'PROHIBITED_CONTENT') {
         throw new ProviderRequestError('模型拒绝或中止了这次内容生成，请调整输入后重试。', 422, 'PROVIDER_REFUSAL')
       }
-      const content = candidate?.content?.parts?.map((part: any) => part.text).join('\n') || ''
       if (!content.trim()) throw new ProviderRequestError('模型返回了空内容，请重试。', 502, 'PROVIDER_EMPTY_RESPONSE')
       return content
     },
   }
 }
 
-async function resolveProvider(providerId?: string, overrides: ProviderTestOverrides = {}) {
+export async function resolveProvider(providerId?: string, overrides: ProviderTestOverrides = {}) {
   const config = await getConfig()
   const storedProvider = config.providers.find((item) => item.id === (providerId || config.llm.defaultProvider))
   const provider = storedProvider ? {
@@ -337,12 +374,7 @@ async function resolveProvider(providerId?: string, overrides: ProviderTestOverr
 export async function getModelClient(providerId?: string, overrides: ProviderTestOverrides = {}): Promise<ModelClient> {
   const { config, provider, key } = await resolveProvider(providerId, overrides)
   if (!provider.model) throw new ModelConfigurationError('Complete the model name before starting a conversation')
-  const capabilityMatches = provider.capability &&
-    provider.capability.conversationReady === true &&
-    provider.capability.lookupReady === true &&
-    provider.capability.contractVersion === STRUCTURED_CONTRACT_VERSION &&
-    provider.capability.model === provider.model &&
-    provider.capability.baseUrl.replace(/\/$/, '') === provider.baseUrl.replace(/\/$/, '')
+  const capabilityMatches = capabilityCurrent(provider)
   if (!providerId && !capabilityMatches) throw new ModelConfigurationError('请先在设置中重新测试并保存当前模型，确认它适合自然对话。')
   const outputMode = capabilityMatches ? provider.capability!.outputMode : provider.id === 'deepseek' ? 'json_object' : 'json_schema'
   if (provider.kind === 'anthropic') return anthropicClient(provider, key, config, outputMode)
@@ -350,11 +382,28 @@ export async function getModelClient(providerId?: string, overrides: ProviderTes
   return openAiClient(provider, key, config, outputMode)
 }
 
+/**
+ * The client for looking back over a conversation or scoring a test: the provider chosen for that when
+ * it is ready to use, otherwise the one used for talking.
+ */
+export async function getReviewClient(): Promise<ModelClient> {
+  const config = await getConfig()
+  const id = config.llm.reviewProvider
+  if (id && id !== config.llm.defaultProvider) {
+    const provider = config.providers.find((item) => item.id === id)
+    const secrets = await getSecrets()
+    if (provider && capabilityCurrent(provider) && keyFor(provider, secrets)) return getModelClient(id)
+  }
+  return getModelClient()
+}
+
 export async function testProvider(providerId: string, overrides: ProviderTestOverrides = {}) {
   const { provider, key } = await resolveProvider(providerId, overrides)
   if (!provider.model) throw new ModelConfigurationError('Complete the model name before testing')
-  const officialModels = await fetchProviderModelOptions(provider, key)
-  if (!officialModels.some((model) => model.id === provider.model)) {
+  // A service of the learner's own may list no models, or serve one under a name its list leaves out:
+  // there the dialogue test below is the proof.
+  const officialModels = provider.id === CUSTOM_PROVIDER_ID ? null : await fetchProviderModelOptions(provider, key)
+  if (officialModels && !officialModels.some((model) => model.id === provider.model)) {
     throw new ProviderRequestError(
       '当前模型不在这把 API Key 可用的官方模型列表中。请刷新列表并重新选择。',
       409,
@@ -437,8 +486,10 @@ export async function testProvider(providerId: string, overrides: ProviderTestOv
         if (/bohol/iu.test(cases.get('entity')!.reply)) failures.push('entity drifted from Boracay to Bohol')
       }
       if (failures.length) throw new Error('Model did not pass: ' + failures.join('; '))
+      // A custom endpoint has no search service of its own, so there is nothing to probe; web lookup stays off for it.
+      const hasLookup = provider.id !== CUSTOM_PROVIDER_ID
       try {
-        await probeProviderLookup(provider, key, 20_000)
+        if (hasLookup) await probeProviderLookup(provider, key, 20_000)
       } catch {
         throw new ProviderRequestError(
           '当前模型能对话，但不能用同一把 API Key 完成官方联网搜索。请换用当前厂商中支持联网的模型。',
@@ -449,7 +500,7 @@ export async function testProvider(providerId: string, overrides: ProviderTestOv
       const capability = {
         outputMode,
         conversationReady: true as const,
-        lookupReady: true as const,
+        lookupReady: hasLookup,
         baseUrl: provider.baseUrl.replace(/\/$/, ''),
         model: provider.model,
         contractVersion: STRUCTURED_CONTRACT_VERSION,

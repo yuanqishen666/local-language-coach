@@ -4,25 +4,48 @@ import path from 'node:path'
 import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { nanoid } from 'nanoid'
-import { getConfig, getSecrets, resetConfig, saveConfig, saveConfigAndSecrets } from './services/config.js'
+import { CUSTOM_PROVIDER_ID, customProvider, getConfig, getSecrets, isHttpUrl, resetConfig, saveConfig, saveConfigAndSecrets } from './services/config.js'
 import { db, row, rows } from './services/database.js'
 import { readAiResponseCache, writeAiResponseCache } from './services/ai-response-cache.js'
-import { getRemoteStatus, isRemoteRequestAllowed, readRemoteState } from './services/remote.js'
+import { getRemoteStatus, isRemoteRequestAllowed, readRemoteState, isLoopbackAddress } from './services/remote.js'
 import { safeJson } from './utils/json.js'
 import { lookupCacheKey } from './utils/ai-cache-key.js'
 import { translationCacheKey } from './utils/translation-cache.js'
-import { coachTurn, localizeConversationSetup, localizeInterfaceValues, localizeMemoryValues, lookupTerm, suggestSetups, summarizeEpisode, translateMessage } from './ai/engine.js'
-import { assertModelConfigured, listProviderModels, STRUCTURED_CONTRACT_VERSION, testProvider } from './ai/provider.js'
-import type { AppConfig, ConversationEpisode, ConversationSetup, ProviderModelProfile } from './types.js'
+import { coachTurn, localizeConversationSetup, localizeInterfaceValues, lookupTerm, suggestSetups, summarizeEpisode, translateMessage } from './ai/engine.js'
+import { assertModelConfigured, capabilityCurrent, listProviderModels, STRUCTURED_CONTRACT_VERSION, testProvider } from './ai/provider.js'
+import type { AppConfig, ConversationEpisode, ConversationMaterial, ConversationSetup, LearningLanguage, MemoryCandidate, ProviderModelProfile } from './types.js'
 import type { ProviderTestOverrides } from './ai/provider.js'
 import { resetProviderSetupSigningKey, verifyProviderSetupReceipt } from './services/provider-setup-receipt.js'
 import { emptyConversationState, extractiveEpisodeFallback, mergeConversationState, normalizeConversationSetup, normalizeConversationState, type StoredConversationMessage } from './ai/context.js'
 import { supportsProviderLookup } from './lookup/provider-tools.js'
 import { normalizeUiLocale } from '../shared/locales.js'
 import { filterConfirmedMemoryCandidates, memorySemanticSlot, normalizeMemorySemanticSlot } from './memory-candidates.js'
-import { localizedMemoryForInterface } from './memory-localization.js'
-import { memoryCategoryForType, tierForExtractedFact } from './memory-policy.js'
+import { asksToRemember, layerOf, memoriesInScope, memoryDestination, memoryFrame, memoryKindOf, memoryValidTo, scopedSemanticSlot, settleMemoryKind, tierForExtractedFact } from './memory-policy.js'
+import { MEMORY_KIND_RULES } from '../shared/memory.js'
+import { activeMemories, keepInConversation, learningFocus, listConversationMemories, memoryForInterface, recordLearningEvents, saveLongTermMemory, storedMemories as allStoredMemories, transaction } from './services/memory-store.js'
+import { ensureMemoryLocalizations, registerMemoryRoutes } from './memory-routes.js'
 import { visibleConversationMessages } from './conversation-messages.js'
+import { CONVERSATION_PRESETS, conversationPreset } from '../shared/conversation-presets.js'
+import { persistSceneRun, prepareSceneConversation, sceneOriginForConversation, setConversationBackgroundSaved, type PreparedSceneConversation } from './services/conversation-scenes.js'
+import { conversationLevel, registerProficiencyRoutes } from './proficiency-routes.js'
+import { registerPlacementRoutes } from './placement-routes.js'
+import { registerConversationHelpRoutes } from './conversation-help-routes.js'
+import { registerRecapRoutes } from './recap-routes.js'
+import { registerSpeechRoutes } from './speech-routes.js'
+import { registerUsageMeter, registerUsageRoutes } from './usage-routes.js'
+import { openActiveProfile, registerProfileRoutes } from './profiles.js'
+import { registerProgressRoutes } from './progress-routes.js'
+import { registerLiveRoutes } from './live-routes.js'
+import { admitFromNetwork, registerLanRoutes, setLanListening } from './lan.js'
+import { tagUsage } from './ai/usage-meter.js'
+import { countsAsError, normalizeRegister, normalizeVariant } from '../shared/variants.js'
+import { randomScene } from './random-scene.js'
+import { setupSteering } from './setup-steering.js'
+import { registerWordbookRoutes, type ConversationStart } from './wordbook-routes.js'
+import { chooseLevel, conversationDifficulty, getProfile, helpForLine, lineAnswered, saveAnswer, skipSeeding, startConversationDifficulty, workingStepFor } from './proficiency-store.js'
+import { difficultyProfile, parseLevel, replyStep } from '../shared/proficiency.js'
+import { ARRANGED_AT_ONCE, type ReviewRating } from '../shared/wordbook.js'
+import { arrangeChosenWords, arrangeDueWords, recordWordUses, reviewPreview, reviewWord, waitingWords, type WordRow } from './word-store.js'
 
 const config = await getConfig()
 const logLevel = process.env.LLC_LOG_LEVEL || (process.env.NODE_ENV === 'test' ? 'silent' : process.env.NODE_ENV === 'production' ? 'warn' : 'info')
@@ -55,6 +78,11 @@ function headerHostname(value?: string) {
 }
 
 app.addHook('onRequest', async (request, reply) => {
+  // Anything that did not come from this computer is another device on the network.
+  if (!isLoopbackAddress(request.socket.remoteAddress)) {
+    if (!(await admitFromNetwork(request, reply))) return reply
+    return
+  }
   const hostname = headerHostname(request.headers.host)
   if (request.headers.host && !hostname) return reply.code(403).send({ error: 'Invalid host' })
   const origin = request.headers.origin
@@ -69,11 +97,18 @@ app.addHook('onRequest', async (request, reply) => {
   }
 })
 
+registerUsageMeter(app)
+await openActiveProfile()
+
 app.setErrorHandler((error, _request, reply) => {
-  const issue = error as Error & { statusCode?: number; code?: string }
+  const issue = error as Error & { statusCode?: number; code?: string; details?: Record<string, number | string> }
   app.log.error(issue)
   const statusCode = issue.statusCode && issue.statusCode >= 400 && issue.statusCode <= 599 ? issue.statusCode : 500
-  reply.code(statusCode).send({ error: issue.message || 'Unexpected error', ...(issue.code ? { code: issue.code } : {}) })
+  reply.code(statusCode).send({
+    error: issue.message || 'Unexpected error',
+    ...(issue.code ? { code: issue.code } : {}),
+    ...(issue.details ? { details: issue.details } : {}),
+  })
 })
 
 app.get('/api/health', async () => ({ app: 'local-language-coach', ok: true, version: '0.1.0', pid: process.pid, localOnly: !(await getRemoteStatus()).active, time: new Date().toISOString() }))
@@ -89,15 +124,13 @@ async function settingsPayload(input?: AppConfig) {
   const current = input || await getConfig()
   const secrets = await getSecrets()
   const providers = current.providers.map((provider) => {
-    const { baseUrl: _baseUrl, ...publicProvider } = provider
+    const { baseUrl, ...publicProvider } = provider
     return {
     ...publicProvider,
+    // Only the address the learner typed in themselves is theirs to see and change.
+    ...(provider.id === CUSTOM_PROVIDER_ID ? { baseUrl } : {}),
     hasApiKey: Boolean(secrets[provider.apiKeySecret]),
-    capabilityReady: Boolean(provider.capability?.conversationReady &&
-      provider.capability.lookupReady &&
-      provider.capability.contractVersion === STRUCTURED_CONTRACT_VERSION &&
-      provider.capability.model === provider.model &&
-      provider.capability.baseUrl.replace(/\/$/, '') === provider.baseUrl.replace(/\/$/, '')),
+    capabilityReady: capabilityCurrent(provider),
   }})
   const selected = providers.find((provider) => provider.id === current.llm.defaultProvider)
   const modelReady = Boolean(selected?.model && selected.capabilityReady && selected.hasApiKey)
@@ -113,12 +146,7 @@ app.put<{ Body: AppConfig }>('/api/settings', async (request) => {
   const requestedDefault = request.body.llm?.defaultProvider
   if (requestedDefault && requestedDefault !== current.llm.defaultProvider) {
     const provider = current.providers.find((item) => item.id === requestedDefault)
-    const qualified = provider?.capability?.conversationReady === true &&
-      provider.capability.lookupReady === true &&
-      provider.capability.contractVersion === STRUCTURED_CONTRACT_VERSION &&
-      provider.capability.model === provider.model &&
-      provider.capability.baseUrl.replace(/\/$/, '') === provider.baseUrl.replace(/\/$/, '') &&
-      Boolean(secrets[provider.apiKeySecret])
+    const qualified = Boolean(provider && capabilityCurrent(provider) && secrets[provider.apiKeySecret])
     if (!qualified) throw Object.assign(new Error('Only a model that passed the natural-dialogue test can be selected.'), { statusCode: 409, code: 'MODEL_NOT_QUALIFIED' })
   }
   const selectedProviderId = requestedDefault || current.llm.defaultProvider
@@ -139,7 +167,7 @@ app.put<{ Body: AppConfig }>('/api/settings', async (request) => {
     ...current,
     setupComplete: typeof request.body.setupComplete === 'boolean' ? request.body.setupComplete : current.setupComplete,
     ui: { ...current.ui, ...request.body.ui },
-    learning: { ...current.learning, ...request.body.learning },
+    learning: { ...current.learning, ...request.body.learning, difficultyStep: undefined },
     llm: { ...current.llm, ...request.body.llm },
     webLookup: {
       ...current.webLookup,
@@ -149,16 +177,75 @@ app.put<{ Body: AppConfig }>('/api/settings', async (request) => {
     },
     server: current.server,
     providers: current.providers,
+    memory: { consolidate: typeof request.body.memory?.consolidate === 'boolean' ? request.body.memory.consolidate : Boolean(current.memory?.consolidate) },
   }
+  delete next.learning.difficultyStep
+  const variant = normalizeVariant(next.learning.targetLanguageCode, next.learning.variant)
+  if (variant) next.learning.variant = variant
+  else delete next.learning.variant
+  if (next.learning.register !== undefined) next.learning.register = normalizeRegister(next.learning.register)
+  if (next.llm.reviewProvider && !next.providers.some((item) => item.id === next.llm.reviewProvider)) next.llm.reviewProvider = ''
   await saveConfig(next)
+  if (!current.setupComplete && next.setupComplete) skipSeeding()
+  // A level picked in settings is the learner's own choice for the language in use.
+  const pickedStep = next.learning.proficiency !== current.learning.proficiency ? parseLevel(next.learning.proficiency) : undefined
+  if (pickedStep !== undefined) {
+    chooseLevel(next.learning.targetLanguageCode, pickedStep, getProfile(next.learning.targetLanguageCode) ? 'manual' : 'self')
+  }
   return settingsPayload(next)
 })
 
 app.post('/api/settings/reset', async () => {
-  const next = await resetConfig({ clearSecrets: true })
+  const before = await getConfig()
+  let next = await resetConfig({ clearSecrets: true })
+  // Resetting settings takes nobody's conversations away: the list of learners survives it.
+  if (before.profiles?.length) next = await saveConfig({ ...next, profiles: before.profiles, activeProfile: before.activeProfile })
+  await openActiveProfile()
   await resetProviderSetupSigningKey()
   return { ok: true, config: next }
 })
+
+
+/** Sets the address and name of the one provider that is the learner's own: any service that speaks the OpenAI chat interface. */
+app.put<{ Body: { name?: string; baseUrl?: string } }>('/api/providers/custom/endpoint', async (request) => {
+  const name = typeof request.body?.name === 'string' ? request.body.name.trim().slice(0, 60) : ''
+  const baseUrl = typeof request.body?.baseUrl === 'string' ? request.body.baseUrl.trim().replace(/\/+$/u, '') : ''
+  if (!name || !isHttpUrl(baseUrl)) throw Object.assign(new Error('Enter a name and an http or https address.'), { statusCode: 400, code: 'CUSTOM_ENDPOINT_INVALID' })
+  const current = await getConfig()
+  const secrets = await getSecrets()
+  const existing = current.providers.find((item) => item.id === CUSTOM_PROVIDER_ID)
+  if (!existing) {
+    current.providers.push(customProvider(name, baseUrl))
+  } else {
+    if (existing.baseUrl !== baseUrl) {
+      // Another address is another service: nothing tested against the old one holds, and the old key is not sent to it.
+      delete existing.capability
+      existing.model = ''
+      existing.enabled = false
+      existing.modelProfiles = {}
+      delete secrets[existing.apiKeySecret]
+      if (current.llm.defaultProvider === CUSTOM_PROVIDER_ID) current.llm.defaultProvider = ''
+      if (current.llm.reviewProvider === CUSTOM_PROVIDER_ID) current.llm.reviewProvider = ''
+    }
+    existing.name = name
+    existing.baseUrl = baseUrl
+  }
+  return settingsPayload(await saveConfigAndSecrets(current, secrets))
+})
+
+app.delete('/api/providers/custom/endpoint', async () => {
+  const current = await getConfig()
+  const secrets = await getSecrets()
+  const existing = current.providers.find((item) => item.id === CUSTOM_PROVIDER_ID)
+  if (!existing) return settingsPayload(current)
+  current.providers = current.providers.filter((item) => item.id !== CUSTOM_PROVIDER_ID)
+  delete secrets[existing.apiKeySecret]
+  if (current.llm.defaultProvider === CUSTOM_PROVIDER_ID) current.llm.defaultProvider = ''
+  if (current.llm.reviewProvider === CUSTOM_PROVIDER_ID) current.llm.reviewProvider = ''
+  return settingsPayload(await saveConfigAndSecrets(current, secrets))
+})
+
+
 
 function parseModelProfiles(value: unknown) {
   if (value === undefined) return undefined
@@ -220,12 +307,7 @@ app.put<{ Params: { id: string }; Body: { apiKey?: string; model?: string; enabl
   if (typeof request.body.enabled === 'boolean') provider.enabled = request.body.enabled
   else provider.enabled = true
   const apiKey = enteredKey || secrets[provider.apiKeySecret] || ''
-  const existingCapabilityMatches = previousModel === provider.model &&
-    provider.capability?.conversationReady === true &&
-    provider.capability.lookupReady === true &&
-    provider.capability.contractVersion === STRUCTURED_CONTRACT_VERSION &&
-    provider.capability.model === provider.model &&
-    provider.capability.baseUrl.replace(/\/$/, '') === provider.baseUrl.replace(/\/$/, '')
+  const existingCapabilityMatches = previousModel === provider.model && capabilityCurrent(provider)
   const requiresReceipt = Boolean(request.body.setupReceipt) || Boolean(enteredKey) ||
     previousModel !== provider.model || !existingCapabilityMatches || !apiKey
   if (requiresReceipt) {
@@ -235,7 +317,7 @@ app.put<{ Params: { id: string }; Body: { apiKey?: string; model?: string; enabl
       apiKey,
     })
     const capability = claims.capability
-    if (capability.conversationReady !== true || capability.lookupReady !== true ||
+    if (capability.conversationReady !== true || (capability.lookupReady !== true && provider.id !== CUSTOM_PROVIDER_ID) ||
       capability.contractVersion !== STRUCTURED_CONTRACT_VERSION ||
       capability.model !== provider.model ||
       capability.baseUrl.replace(/\/$/, '') !== provider.baseUrl.replace(/\/$/, '') ||
@@ -273,10 +355,61 @@ app.post<{ Params: { id: string }; Body: ProviderTestOverrides }>('/api/provider
 
 app.post<{ Params: { id: string }; Body: ProviderTestOverrides }>('/api/providers/:id/models', async (request) => listProviderModels(request.params.id, request.body || {}))
 
-app.post<{ Body: { domain?: string; place?: string; detail?: string; interfaceLocale?: string } }>('/api/conversation-setups/suggest', async (request) => ({ setups: await suggestSetups(request.body || {}) }))
+app.post<{ Body: { domain?: string; place?: string; detail?: string; interfaceLocale?: string } }>('/api/conversation-setups/suggest', async (request) => {
+  const current = await getConfig()
+  const code = current.learning.targetLanguageCode
+  return { setups: await suggestSetups({ ...(request.body || {}), ...setupSteering(code), difficultyStep: workingStepFor(code, current.learning.proficiency) }) }
+})
+
+/** Surprise me: a kind of conversation, a place and a person drawn at random, and straight into the conversation. */
+app.post<{ Body: { interfaceLocale?: string } }>('/api/conversation-setups/random', async (request) => {
+  await assertModelConfigured()
+  const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(request.body?.interfaceLocale, current.ui.locale)
+  const code = current.learning.targetLanguageCode
+  const [suggested] = await suggestSetups({
+    ...randomScene(), interfaceLocale, count: 1,
+    avoidRecent: setupSteering(code).avoidRecent,
+    difficultyStep: workingStepFor(code, current.learning.proficiency),
+  })
+  const setup = normalizeConversationSetup(suggested)
+  if (!setup) throw Object.assign(new Error('The model returned no usable scene.'), { statusCode: 502, code: 'PROVIDER_INVALID_RESPONSE' })
+  return createConversationRecord(setup, interfaceLocale, current.learning)
+})
+
+app.get('/api/conversation-presets', async () => ({
+  presets: CONVERSATION_PRESETS.map(({ promptBrief: _promptBrief, ...preset }) => preset),
+}))
+
+/**
+ * A reply records the ids of the memories it was written with. Their wording is looked up when a
+ * message is read, so an edited memory shows as it is now and a deleted one is no longer shown.
+ */
+function withUsedMemories<T extends Record<string, any>>(meta: T, interfaceLocale?: string): T {
+  const ids = Array.isArray(meta?.usedMemoryIds) ? meta.usedMemoryIds as string[] : []
+  if (!ids.length) return meta
+  const known = new Map(allStoredMemories().map((memory) => [String(memory.id), memory]))
+  const usedMemories = ids.flatMap((id) => {
+    const memory = known.get(id)
+    if (!memory) return []
+    const shown = interfaceLocale ? memoryForInterface(memory, interfaceLocale) : memory
+    return [{ id, value: String(shown.value || ''), layer: layerOf(memory.memoryType) }]
+  })
+  return { ...meta, usedMemories }
+}
 
 function setupForConversation(conversation: Record<string, any>) {
   return normalizeConversationSetup(safeJson(conversation.setup_json, null))
+}
+
+/**
+ * The learning language a conversation was started in. Conversations from before it was
+ * recorded have none, and follow whatever the learning language is set to now.
+ */
+function recordedLearningLanguage(conversation: Record<string, any> | undefined): LearningLanguage | undefined {
+  const targetLanguage = typeof conversation?.target_language === 'string' ? conversation.target_language.trim() : ''
+  const targetLanguageCode = typeof conversation?.target_language_code === 'string' ? conversation.target_language_code.trim() : ''
+  return targetLanguage && targetLanguageCode ? { targetLanguage, targetLanguageCode } : undefined
 }
 
 function feedbackLocalizationSnapshot(meta: Record<string, any>, messageId: string, translations: Map<string, string>) {
@@ -459,23 +592,79 @@ app.get<{ Querystring: { interfaceLocale?: string } }>('/api/conversations', asy
   })
 })
 
+function createConversationRecord(setup: ConversationSetup | null, interfaceLocale: string, learning: AppConfig['learning'], title?: string, preparedScene?: PreparedSceneConversation, start: ConversationStart = {}) {
+  const id = nanoid()
+  tagUsage({ conversationId: id })
+  const now = new Date().toISOString()
+  const conversationTitle = title?.trim() || setup?.title || 'Open conversation'
+  const state = emptyConversationState(setup)
+  const openingLine = setup?.openingLine || start.openingLine?.trim() || ''
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.prepare(`INSERT INTO conversations
+      (id, mode, title, setup_json, interface_locale, target_language, target_language_code, state_json, material_json, status, created_at, updated_at)
+      VALUES (?, 'conversation', ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`).run(id, conversationTitle, setup ? JSON.stringify(setup) : null, interfaceLocale, learning.targetLanguage, learning.targetLanguageCode, JSON.stringify(state), start.material ? JSON.stringify(start.material) : '', now, now)
+    if (openingLine) {
+      db.prepare('INSERT INTO messages (id, conversation_id, role, content, meta_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(nanoid(), id, 'assistant', openingLine, JSON.stringify({ opening: true }), 'complete', now)
+    }
+    if (preparedScene) persistSceneRun(id, preparedScene)
+    startConversationDifficulty(id, learning.targetLanguageCode, learning.proficiency)
+    if (start.words?.ids.length) arrangeChosenWords(id, start.words.ids, start.words.source, new Date(now))
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+  return { id }
+}
+
 app.post<{ Body: { title?: string; setup?: ConversationSetup | null; interfaceLocale?: string } }>('/api/conversations', async (request) => {
   await assertModelConfigured()
-  const id = nanoid()
-  const now = new Date().toISOString()
   const setup = normalizeConversationSetup(request.body.setup)
   const current = await getConfig()
   const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
-  const title = request.body.title?.trim() || setup?.title || 'Open conversation'
-  const state = emptyConversationState(setup)
-  db.prepare(`INSERT INTO conversations
-    (id, mode, title, setup_json, interface_locale, state_json, status, created_at, updated_at)
-    VALUES (?, 'conversation', ?, ?, ?, ?, 'active', ?, ?)`).run(id, title, setup ? JSON.stringify(setup) : null, interfaceLocale, JSON.stringify(state), now, now)
-  if (setup?.openingLine) {
-    db.prepare('INSERT INTO messages (id, conversation_id, role, content, meta_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(nanoid(), id, 'assistant', setup.openingLine, JSON.stringify({ opening: true }), 'complete', now)
-  }
-  return { id }
+  return createConversationRecord(setup, interfaceLocale, current.learning, request.body.title)
+})
+
+app.post<{ Params: { id: string }; Body: { anchor?: string; interfaceLocale?: string } }>('/api/conversation-presets/:id/start', async (request) => {
+  const preset = conversationPreset(request.params.id)
+  if (!preset) throw Object.assign(new Error('Scene preset not found.'), { statusCode: 404 })
+  const anchor = typeof request.body.anchor === 'string' ? request.body.anchor.trim() : ''
+  if (preset.kind === 'anchor' && !anchor) throw Object.assign(new Error('Add one detail before starting this scene.'), { statusCode: 400, code: 'SCENE_ANCHOR_REQUIRED' })
+  if ('anchor' in preset && preset.anchor && anchor.length > preset.anchor.maxLength) throw Object.assign(new Error('That scene detail is too long.'), { statusCode: 400, code: 'SCENE_ANCHOR_TOO_LONG' })
+  await assertModelConfigured()
+  const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
+  const prepared = await prepareSceneConversation({
+    presetId: preset.id, anchorValue: anchor, interfaceLocale,
+    difficultyStep: workingStepFor(current.learning.targetLanguageCode, current.learning.proficiency),
+  })
+  return createConversationRecord(prepared.setup, interfaceLocale, current.learning, undefined, prepared)
+})
+
+app.post<{ Params: { id: string }; Body: { mode?: 'same_background' | 'new_encounter'; interfaceLocale?: string } }>('/api/conversations/:id/replay', async (request) => {
+  const origin = sceneOriginForConversation(request.params.id)
+  if (!origin) throw Object.assign(new Error('This conversation did not start from a reusable scene.'), { statusCode: 404 })
+  await assertModelConfigured()
+  const current = await getConfig()
+  const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
+  const mode = request.body.mode === 'same_background' ? 'same_background' : 'new_encounter'
+  const prepared = await prepareSceneConversation({
+    presetId: origin.presetId,
+    anchorValue: origin.anchorValue,
+    interfaceLocale,
+    backgroundId: mode === 'same_background' ? origin.backgroundId : undefined,
+    excludeBackgroundId: mode === 'new_encounter' ? origin.backgroundId : undefined,
+    runMode: mode,
+    difficultyStep: workingStepFor(current.learning.targetLanguageCode, current.learning.proficiency),
+  })
+  return createConversationRecord(prepared.setup, interfaceLocale, current.learning, undefined, prepared)
+})
+
+app.patch<{ Params: { id: string }; Body: { saved?: boolean } }>('/api/conversations/:id/background', async (request) => {
+  setConversationBackgroundSaved(request.params.id, request.body.saved === true)
+  return { ok: true, saved: request.body.saved === true }
 })
 
 app.get<{ Params: { id: string }; Querystring: { interfaceLocale?: string } }>('/api/conversations/:id', async (request) => {
@@ -503,14 +692,21 @@ app.get<{ Params: { id: string }; Querystring: { interfaceLocale?: string } }>('
       responseLocale = requestedLocale
     }
   }
-  const messages = await messagesForInterface(conversation.id, requestedLocale)
+  const messages = (await messagesForInterface(conversation.id, requestedLocale))
+    .map((message) => message.role === 'assistant' ? { ...message, meta: withUsedMemories(message.meta, requestedLocale) } : message)
+  const origin = sceneOriginForConversation(conversation.id)
+  const learning = recordedLearningLanguage(conversation)
   return {
     id: conversation.id,
     mode: 'conversation',
     title: setup?.title || conversation.title,
     status: conversation.status === 'archived' ? 'archived' : 'active',
     interfaceLocale: responseLocale,
+    // Absent on conversations from before it was recorded; the page then uses the current learning language.
+    ...(learning ? { targetLanguageCode: learning.targetLanguageCode } : {}),
     setup,
+    scene: origin ? { origin } : null,
+    level: conversationLevel(conversation.id, learning?.targetLanguageCode || current.learning.targetLanguageCode, current.learning.proficiency),
     createdAt: conversation.created_at,
     messages,
   }
@@ -548,7 +744,7 @@ function conversationTurnMessage(message: Record<string, any>) {
     content: message.content,
     clientMessageId: message.client_message_id || undefined,
     status: message.status,
-    meta: safeJson(message.meta_json, {}),
+    meta: withUsedMemories(safeJson<Record<string, any>>(message.meta_json, {})),
     createdAt: message.created_at,
   }
 }
@@ -598,7 +794,7 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
     if (existing?.status === 'complete') {
       const assistant = row<Record<string, any>>('SELECT * FROM messages WHERE reply_to_message_id = ?', existing.id)
       if (assistant) {
-        const meta = safeJson(assistant.meta_json, {})
+        const meta = withUsedMemories(safeJson<Record<string, any>>(assistant.meta_json, {}), interfaceLocale)
         return {
           userMessage: { id: existing.id, role: 'user', content: existing.content, clientMessageId, status: 'complete', createdAt: existing.created_at },
           assistantMessage: { id: assistant.id, role: 'assistant', content: assistant.content, status: 'complete', meta, createdAt: assistant.created_at },
@@ -617,26 +813,42 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
     const setup = setupForConversation(conversation)
     const initialState = normalizeConversationState(safeJson(conversation.state_json, null), setup)
     const compacted = await compactOlderMessages(request.params.id, messageRows, initialState, interfaceLocale)
-    const storedMemories = rows<Record<string, any>>(`SELECT id, category, key, semantic_slot AS semanticSlot, value, tier,
-      interface_locale AS interfaceLocale, localized_values_json AS localizedValuesJson,
-      memory_type AS memoryType, topic, importance, pinned, confidence, sensitive, status,
-      source_conversation_id AS sourceConversationId, source_message_id AS sourceMessageId,
-      last_used_at AS lastUsedAt, use_count AS useCount, last_mentioned_at AS lastMentionedAt,
-      mention_count AS mentionCount, created_at AS createdAt, updated_at AS updatedAt
-      FROM memories
-      WHERE status = ? AND (valid_to IS NULL OR valid_to > ?)
-      ORDER BY CASE WHEN tier = 'core' THEN 0 ELSE 1 END, pinned DESC, importance DESC, updated_at DESC`, 'confirmed', now)
+    const frame = memoryFrame(setup)
+    const learning = recordedLearningLanguage(conversation)
+    const targetLanguageCode = learning?.targetLanguageCode || current.learning.targetLanguageCode
+    const everyMemory = activeMemories(now)
+    // Scope comes first. What this conversation may not see never reaches the model, however relevant it looks.
+    const storedMemories = memoriesInScope(everyMemory, { frame, targetLanguageCode })
     await ensureMemoryLocalizations(storedMemories, interfaceLocale).catch(() => undefined)
     const memories = storedMemories.map((memory) => memoryForInterface(memory, interfaceLocale))
+    const conversationMemories = listConversationMemories(request.params.id)
+    // The difficulty this conversation stands at, and the help asked for on the line being answered.
+    const lineId = lineAnswered(request.params.id, userId)
+    const difficulty = {
+      state: conversationDifficulty(request.params.id, targetLanguageCode, current.learning.proficiency),
+      help: helpForLine(request.params.id, lineId),
+    }
+    const material = safeJson<ConversationMaterial | null>(conversation.material_json, null)
+    // Saved words whose review has come get a place in the conversation, a couple at a time.
+    if (current.learning.reviewInConversation !== false) {
+      arrangeDueWords({ conversationId: request.params.id, languageCode: targetLanguageCode, step: replyStep(difficulty.state), now: new Date(now) })
+    }
+    const reviewWords = waitingWords(request.params.id).slice(0, ARRANGED_AT_ONCE).map((word) => ({ term: word.term, meaning: word.meaning }))
     let turn
     try {
       turn = await coachTurn({
+        difficulty,
+        reviewWords,
+        material,
         setup,
         messages: messageRows,
         memories,
+        conversationMemories: conversationMemories.map((memory) => ({ key: memory.key, value: memory.value })),
+        learningFocus: learningFocus(targetLanguageCode, current.learning.targetLanguageCode),
         episodes: compacted.episodes,
         state: compacted.state,
         interfaceLocale,
+        learning,
       })
     } catch (error) {
       db.prepare('UPDATE messages SET status = ? WHERE id = ?').run('failed', userId)
@@ -658,53 +870,108 @@ app.post<{ Params: { id: string }; Body: { content: string; clientMessageId?: st
         memoryIds: turn.context.memoryIds,
       },
     })
-    result.memoryCandidates = filterConfirmedMemoryCandidates(merged.userFacts.map((fact) => {
-      const semanticSlot = normalizeMemorySemanticSlot(fact.semanticSlot)
-      const existingMemory = memories.find((memory) =>
-        (semanticSlot && memorySemanticSlot(memory) === semanticSlot) || memory.key === fact.key)
-      const memoryType = fact.memoryType || 'profile'
-      const category = existingMemory?.category === 'learning' || existingMemory?.category === 'scene' || existingMemory?.category === 'personal'
-        ? existingMemory.category
-        : memoryCategoryForType(memoryType)
-      return {
-        category: category as 'personal' | 'learning' | 'scene',
+    // Every statement the learner made about themselves, or the part they play, stays with this
+    // conversation. Only one about the real learner that holds beyond the moment is also offered
+    // as a long-term memory, and the learner decides that. The model's reading never does.
+    const explicitRequest = asksToRemember(content)
+    const kept: Array<Parameters<typeof keepInConversation>[0]> = []
+    const offered: MemoryCandidate[] = []
+    const savedAtOnce = new Set<MemoryCandidate>()
+    for (const fact of merged.userFacts) {
+      const about = fact.about || (frame === 'scene' ? 'persona' : 'user')
+      const durability = fact.durability || 'lasting'
+      const destination = memoryDestination({ frame, about, durability, explicit: Boolean(fact.explicit) && explicitRequest })
+      if (destination === 'drop') continue
+      const kind = settleMemoryKind(memoryKindOf(fact.memoryType), durability)
+      const semanticSlot = scopedSemanticSlot(normalizeMemorySemanticSlot(fact.semanticSlot), kind, targetLanguageCode)
+      kept.push({
+        conversationId: request.params.id, key: fact.key, semanticSlot, value: fact.value, quote: fact.quote, about, durability,
+        memoryType: kind, topic: fact.topic, sensitive: fact.sensitive, interfaceLocale, sourceMessageId: userId,
+      })
+      if (destination === 'conversation') continue
+      const existingMemory = everyMemory.find((memory) =>
+        (semanticSlot && memorySemanticSlot(memory) === semanticSlot) || (memory.key === fact.key && layerOf(memory.memoryType) === layerOf(kind)))
+      const validTo = memoryValidTo(kind, durability, fact.validDays)
+      const candidate: MemoryCandidate = {
+        category: layerOf(kind),
         key: fact.key,
         semanticSlot,
         value: fact.value,
+        quote: fact.quote,
         confidence: 1,
         sensitive: fact.sensitive,
-        action: existingMemory ? 'update' as const : 'create' as const,
-        tier: tierForExtractedFact(fact, existingMemory?.tier),
-        memoryType,
+        action: existingMemory ? 'update' : 'create',
+        tier: tierForExtractedFact({ ...fact, memoryType: kind }, existingMemory?.tier),
+        memoryType: kind,
         topic: fact.topic || 'general',
         importance: Math.max(0, Math.min(1, fact.importance ?? 0.5)),
         sourceMessageId: userId,
-        ...(existingMemory ? { previousValue: String(existingMemory.value || '') } : {}),
+        frame,
+        durability,
+        ...(validTo ? { validTo } : {}),
+        ...(MEMORY_KIND_RULES[kind].perLanguage ? { targetLanguageCode } : {}),
+        ...(existingMemory ? { previousValue: String(memoryForInterface(existingMemory, interfaceLocale).value || '') } : {}),
       }
-    }), storedMemories)
-    db.exec('BEGIN IMMEDIATE')
+      offered.push(candidate)
+      // Asking to remember stores something new at once. Changing what is already remembered still asks,
+      // so the learner sees what would be replaced.
+      if (destination === 'save' && !existingMemory) savedAtOnce.add(candidate)
+    }
+    result.memoryCandidates = filterConfirmedMemoryCandidates(offered, everyMemory)
+    result.usedMemoryIds = [...new Set(turn.context.memoryIds)]
     try {
-      db.prepare('INSERT INTO messages (id, conversation_id, role, content, meta_json, reply_to_message_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(assistantId, request.params.id, 'assistant', result.roleReply, JSON.stringify(result), userId, 'complete', replyAt)
-      db.prepare('UPDATE messages SET status = ? WHERE id = ?').run('complete', userId)
-      db.prepare("UPDATE conversations SET status = 'active', archived_at = NULL, state_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(merged.state), replyAt, request.params.id)
-      for (const memoryId of new Set(turn.context.memoryIds)) {
-        db.prepare('UPDATE memories SET use_count = use_count + 1, last_used_at = ? WHERE id = ?').run(replyAt, memoryId)
-      }
-      const mentionedMemory = memories.find((memory) => memory.key === turn.context.dialoguePlan.callbackMemoryKey)
-      if (mentionedMemory && turn.context.memoryIds.includes(String(mentionedMemory.id))) {
-        db.prepare('UPDATE memories SET mention_count = mention_count + 1, last_mentioned_at = ? WHERE id = ?')
-          .run(replyAt, mentionedMemory.id)
-      }
-      db.exec('COMMIT')
+      transaction(() => {
+        for (const item of kept) keepInConversation(item)
+        for (const candidate of result.memoryCandidates) {
+          if (!savedAtOnce.has(candidate)) continue
+          const save = (tier: MemoryCandidate['tier']) => saveLongTermMemory({
+            ...candidate, tier, status: 'confirmed', sourceConversationId: request.params.id, interfaceLocale,
+          })
+          try {
+            candidate.savedMemoryId = save(candidate.tier).id
+          } catch (error) {
+            // A full set of core memories must not cost the learner the turn; it is stored without the mark.
+            if ((error as { code?: string })?.code !== 'CORE_MEMORY_LIMIT') throw error
+            candidate.tier = 'long_term'
+            candidate.savedMemoryId = save('long_term').id
+          }
+        }
+        recordLearningEvents({
+          targetLanguageCode, conversationId: request.params.id, messageId: userId,
+          corrections: result.corrections, reconstruction: result.reconstruction, at: replyAt,
+        })
+        const reviewedWords = recordWordUses({
+          conversationId: request.params.id, messageId: userId, content, corrections: result.corrections.filter(countsAsError),
+          languageCode: targetLanguageCode, now: new Date(replyAt),
+        })
+        if (reviewedWords.length) result.reviewedWords = reviewedWords
+        db.prepare('INSERT INTO messages (id, conversation_id, role, content, meta_json, reply_to_message_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(assistantId, request.params.id, 'assistant', result.roleReply, JSON.stringify(result), userId, 'complete', replyAt)
+        db.prepare('UPDATE messages SET status = ? WHERE id = ?').run('complete', userId)
+        db.prepare("UPDATE conversations SET status = 'active', archived_at = NULL, state_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(merged.state), replyAt, request.params.id)
+        if (turn.level) {
+          saveAnswer({
+            conversationId: request.params.id, partnerMessageId: lineId, userMessageId: userId, languageCode: targetLanguageCode,
+            step: turn.level.step, signal: turn.level.signal, difficulty: turn.level.difficulty, at: replyAt,
+          })
+        }
+        for (const memoryId of new Set(turn.context.memoryIds)) {
+          db.prepare('UPDATE memories SET use_count = use_count + 1, last_used_at = ? WHERE id = ?').run(replyAt, memoryId)
+        }
+        const mentionedMemory = memories.find((memory) => memory.key === turn.context.dialoguePlan.callbackMemoryKey)
+        if (mentionedMemory && turn.context.memoryIds.includes(String(mentionedMemory.id))) {
+          db.prepare('UPDATE memories SET mention_count = mention_count + 1, last_mentioned_at = ? WHERE id = ?')
+            .run(replyAt, mentionedMemory.id)
+        }
+      })
     } catch (error) {
-      db.exec('ROLLBACK')
       db.prepare('UPDATE messages SET status = ? WHERE id = ?').run('failed', userId)
       throw error
     }
     return {
       userMessage: { id: userId, role: 'user', content, clientMessageId, status: 'complete', createdAt: now },
-      assistantMessage: { id: assistantId, role: 'assistant', content: result.roleReply, status: 'complete', meta: result, createdAt: replyAt },
+      assistantMessage: { id: assistantId, role: 'assistant', content: result.roleReply, status: 'complete', meta: withUsedMemories(result, interfaceLocale), createdAt: replyAt },
       status: 'active',
+      ...(turn.level ? { level: { replyStep: turn.level.step, speechRateFactor: difficultyProfile(turn.level.step, targetLanguageCode).speechRateFactor } } : {}),
     }
   })()
   inFlightTurns.set(inFlightKey, task)
@@ -727,9 +994,10 @@ app.post<{ Params: { id: string; messageId: string }; Body: { interfaceLocale?: 
     return { translation: translations[interfaceLocale], interfaceLocale, cached: true, cacheSource: 'message' }
   }
   const setup = setupForConversation(conversation)
+  const learning = recordedLearningLanguage(conversation)
   const cacheKey = translationCacheKey({
     content: message.content,
-    targetLanguageCode: current.learning.targetLanguageCode,
+    targetLanguageCode: (learning || current.learning).targetLanguageCode,
     interfaceLocale,
     setup,
   })
@@ -747,7 +1015,7 @@ app.post<{ Params: { id: string; messageId: string }; Body: { interfaceLocale?: 
     translation = await running
   } else {
     const task = (async () => {
-      const generated = await translateMessage(message.content, setup, interfaceLocale)
+      const generated = await translateMessage(message.content, setup, interfaceLocale, learning)
       const now = new Date().toISOString()
       db.prepare(`INSERT INTO translation_cache (cache_key, translation, created_at, last_accessed)
         VALUES (?, ?, ?, ?)
@@ -766,20 +1034,25 @@ app.post<{ Params: { id: string; messageId: string }; Body: { interfaceLocale?: 
   return { translation, interfaceLocale, cached: Boolean(running), cacheSource: running ? 'inflight' : 'generated' }
 })
 
-app.post<{ Body: { term: string; sentence: string; previous?: string; setup?: unknown; interfaceLocale?: string } }>('/api/lookup', async (request) => {
+app.post<{ Body: { term: string; sentence: string; previous?: string; setup?: unknown; interfaceLocale?: string; conversationId?: string } }>('/api/lookup', async (request) => {
   const current = await getConfig()
   const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
+  const { conversationId, ...lookupRequest } = request.body
+  // A word looked up inside a conversation is in that conversation's language, not necessarily the current one.
+  const learning = typeof conversationId === 'string' && conversationId
+    ? recordedLearningLanguage(row<Record<string, any>>('SELECT target_language, target_language_code FROM conversations WHERE id = ?', conversationId))
+    : undefined
   const cacheKey = lookupCacheKey({
-    ...request.body,
-    targetLanguage: current.learning.targetLanguage,
-    targetLanguageCode: current.learning.targetLanguageCode,
+    ...lookupRequest,
+    targetLanguage: (learning || current.learning).targetLanguage,
+    targetLanguageCode: (learning || current.learning).targetLanguageCode,
     interfaceLocale,
   })
   const cached = readAiResponseCache<Awaited<ReturnType<typeof lookupTerm>>>('lookup', cacheKey)
   if (cached) return { lookup: cached, cached: true, cacheSource: 'persistent' }
   const running = inFlightLookups.get(cacheKey)
   if (running) return { lookup: await running, cached: true, cacheSource: 'inflight' }
-  const task = lookupTerm({ ...request.body, interfaceLocale })
+  const task = lookupTerm({ ...lookupRequest, interfaceLocale, learning })
   inFlightLookups.set(cacheKey, task)
   try {
     const lookup = await task
@@ -818,6 +1091,7 @@ app.post<{ Params: { id: string }; Body: { interfaceLocale?: string } }>('/api/w
     sentence: word.source_sentence || word.term,
     setup: conversation ? setupForConversation(conversation) : undefined,
     interfaceLocale,
+    learning: recordedLearningLanguage(conversation),
   })
   const now = new Date().toISOString()
   db.prepare('UPDATE word_entries SET lemma = ?, meaning = ?, details_json = ?, interface_locale = ?, updated_at = ? WHERE id = ?')
@@ -825,216 +1099,83 @@ app.post<{ Params: { id: string }; Body: { interfaceLocale?: string } }>('/api/w
   return wordPayload({ ...word, lemma: lookup.lemma || word.lemma, meaning: lookup.contextMeaning, details_json: JSON.stringify(lookup), interface_locale: interfaceLocale, updated_at: now })
 })
 
-app.delete<{ Params: { id: string } }>('/api/words/:id', async (request) => { db.prepare('DELETE FROM word_entries WHERE id = ?').run(request.params.id); return { ok: true } })
-
-app.get('/api/reviews/due', async () => rows<Record<string, any>>('SELECT * FROM word_entries WHERE due_at <= ? ORDER BY due_at LIMIT 30', new Date().toISOString()).map(wordPayload))
-
-app.post<{ Params: { id: string }; Body: { rating: 1 | 2 | 3 | 4 } }>('/api/reviews/:id', async (request) => {
+app.post<{ Params: { id: string }; Body: { interfaceLocale?: string } }>('/api/words/:id/translation', async (request) => {
   const word = row<Record<string, any>>('SELECT * FROM word_entries WHERE id = ?', request.params.id)
   if (!word) throw Object.assign(new Error('Word not found'), { statusCode: 404 })
-  const rating = Math.max(1, Math.min(4, request.body.rating))
-  const repetitions = rating === 1 ? 0 : word.repetitions + 1
-  const ease = Math.max(1.3, word.ease + (rating - 3) * 0.15)
-  const interval = rating === 1 ? 0 : repetitions === 1 ? 1 : repetitions === 2 ? 3 : Math.max(1, Math.round(word.interval_days * ease * (rating === 2 ? 0.7 : rating === 4 ? 1.25 : 1)))
-  const due = new Date(Date.now() + (rating === 1 ? 10 * 60_000 : interval * 86_400_000)).toISOString()
-  db.prepare('UPDATE word_entries SET repetitions = ?, ease = ?, interval_days = ?, due_at = ?, updated_at = ? WHERE id = ?').run(repetitions, ease, interval, due, new Date().toISOString(), request.params.id)
-  return { dueAt: due, intervalDays: interval }
-})
-
-const CORE_MEMORY_LIMIT = 15
-const memoryCategories = new Set(['personal', 'learning', 'scene'])
-const memoryTypes = new Set(['preference', 'constraint', 'profile', 'learning', 'episodic'])
-
-function cleanMemoryTopic(value: unknown) {
-  const topic = typeof value === 'string' ? value.trim().toLocaleLowerCase() : ''
-  return topic.slice(0, 40) || 'general'
-}
-
-function assertCoreMemoryAvailable(existing?: Record<string, any>) {
-  if (existing?.tier === 'core') return
-  const count = row<{ count: number }>("SELECT COUNT(*) AS count FROM memories WHERE tier = 'core' AND status = 'confirmed'")?.count || 0
-  if (count >= CORE_MEMORY_LIMIT) {
-    throw Object.assign(new Error(`Core memory is limited to ${CORE_MEMORY_LIMIT} items. Demote one first.`), { statusCode: 409, code: 'CORE_MEMORY_LIMIT' })
-  }
-}
-
-function addMemoryRevision(memoryId: string, previousValue: string | null, nextValue: string | null, changeType: string, sourceConversationId?: string | null, sourceMessageId?: string | null) {
-  db.prepare(`INSERT INTO memory_revisions
-    (id, memory_id, previous_value, next_value, change_type, source_conversation_id, source_message_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    nanoid(), memoryId, previousValue, nextValue, changeType, sourceConversationId || null, sourceMessageId || null, new Date().toISOString(),
-  )
-}
-
-function memoryForInterface(memory: Record<string, any>, interfaceLocale: string): Record<string, any> {
-  const localized = localizedMemoryForInterface(memory, interfaceLocale)
-  return { ...localized, semanticSlot: memorySemanticSlot(localized) }
-}
-
-async function ensureMemoryLocalizations(stored: Array<Record<string, any>>, interfaceLocale: string) {
-  const missing = stored.filter((item) => item.status === 'confirmed' && item.interfaceLocale !== interfaceLocale &&
-    !safeJson<Record<string, string>>(item.localizedValuesJson, {})[interfaceLocale])
-  if (!missing.length) return
-  const localized = await localizeMemoryValues(missing.map((item) => ({ id: item.id, value: item.value })), interfaceLocale)
-  db.exec('BEGIN IMMEDIATE')
-  try {
-    for (const item of localized) {
-      const source = stored.find((memory) => memory.id === item.id)
-      if (!source) continue
-      const translations = safeJson<Record<string, string>>(source.localizedValuesJson, {})
-      translations[interfaceLocale] = item.value
-      source.localizedValuesJson = JSON.stringify(translations)
-      db.prepare('UPDATE memories SET localized_values_json = ? WHERE id = ?')
-        .run(source.localizedValuesJson, item.id)
-    }
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
-}
-
-app.get('/api/memories', async () => rows<Record<string, any>>(`SELECT id, category, key, semantic_slot AS semanticSlot, value, tier,
-  interface_locale AS interfaceLocale, localized_values_json AS localizedValuesJson, memory_type AS memoryType, topic, importance, pinned, confidence, sensitive, status,
-  source_conversation_id AS sourceConversationId, source_message_id AS sourceMessageId,
-  supersedes_id AS supersedesId, valid_from AS validFrom, valid_to AS validTo,
-  last_used_at AS lastUsedAt, use_count AS useCount, last_mentioned_at AS lastMentionedAt,
-  mention_count AS mentionCount, created_at AS createdAt, updated_at AS updatedAt
-  FROM memories
-  ORDER BY CASE WHEN tier = 'core' THEN 0 ELSE 1 END, pinned DESC, importance DESC, updated_at DESC`).map((memory) => ({
-    ...memory,
-    semanticSlot: memorySemanticSlot(memory),
-    pinned: Boolean(memory.pinned),
-    sensitive: Boolean(memory.sensitive),
-  })))
-
-app.post<{ Body: {
-  category: string; key: string; value: string; confidence?: number; sensitive?: boolean; status?: string
-  sourceConversationId?: string; sourceMessageId?: string; tier?: 'core' | 'long_term'; memoryType?: string; topic?: string; importance?: number; interfaceLocale?: string; semanticSlot?: string
-} }>('/api/memories', async (request) => {
-  const body = request.body
-  const category = memoryCategories.has(body.category) ? body.category : 'personal'
-  const key = body.key?.trim()
-  const value = body.value?.trim()
-  if (!key || !value) throw Object.assign(new Error('Memory key and value are required.'), { statusCode: 400 })
-  const requestedSemanticSlot = normalizeMemorySemanticSlot(body.semanticSlot)
-  let existing = row<Record<string, any>>('SELECT * FROM memories WHERE category = ? AND key = ?', category, key)
-  if (!existing && requestedSemanticSlot) {
-    existing = rows<Record<string, any>>('SELECT * FROM memories')
-      .find((memory) => memorySemanticSlot(memory) === requestedSemanticSlot)
-  }
-  const semanticSlot = requestedSemanticSlot || normalizeMemorySemanticSlot(existing?.semantic_slot) ||
-    memorySemanticSlot({ category, key })
-  const sensitive = body.sensitive === undefined ? Boolean(existing?.sensitive) : Boolean(body.sensitive)
-  const requestedTier = body.tier || existing?.tier || 'long_term'
-  const tier = requestedTier === 'core' ? 'core' : 'long_term'
-  if (tier === 'core') assertCoreMemoryAvailable(existing)
-  const existingMemoryType = existing?.memory_type
-  const memoryType = memoryTypes.has(body.memoryType || '')
-    ? body.memoryType!
-    : memoryTypes.has(existingMemoryType) ? existingMemoryType : category === 'learning' ? 'learning' : category === 'scene' ? 'episodic' : 'profile'
-  const importance = Math.max(0, Math.min(1, Number(body.importance ?? existing?.importance ?? 0.5)))
-  const confidence = Number.isFinite(body.confidence) ? body.confidence! : existing?.confidence ?? 1
-  const topic = cleanMemoryTopic(body.topic ?? existing?.topic)
-  const sourceConversationId = body.sourceConversationId ?? existing?.source_conversation_id ?? null
-  const sourceMessageId = body.sourceMessageId ?? existing?.source_message_id ?? null
-  const status = body.status || existing?.status || 'confirmed'
+  const passage = String(word.source_sentence || '').trim()
+  if (!passage) throw Object.assign(new Error('Word has no source passage'), { statusCode: 404 })
   const current = await getConfig()
-  const interfaceLocale = normalizeUiLocale(body.interfaceLocale, current.ui.locale)
-  const now = new Date().toISOString()
-  const id = existing?.id || nanoid()
-  db.exec('BEGIN IMMEDIATE')
-  try {
-    if (existing) {
-      addMemoryRevision(id, existing.value, value, existing.value === value ? 'metadata' : 'update', sourceConversationId, sourceMessageId)
-      db.prepare(`UPDATE memories SET value = ?, semantic_slot = ?, interface_locale = ?, localized_values_json = '{}', tier = ?, memory_type = ?, topic = ?, importance = ?, pinned = ?, confidence = ?, sensitive = ?,
-        status = ?, source_conversation_id = ?, source_message_id = ?, valid_to = NULL, updated_at = ? WHERE id = ?`).run(
-        value, semanticSlot, interfaceLocale, tier, memoryType, topic, importance, tier === 'core' ? existing.pinned : 0, confidence, sensitive ? 1 : 0,
-        status, sourceConversationId, sourceMessageId, now, id,
-      )
-    } else {
-      db.prepare(`INSERT INTO memories
-        (id, category, key, semantic_slot, value, interface_locale, localized_values_json, tier, memory_type, topic, importance, pinned, confidence, sensitive, status,
-          source_conversation_id, source_message_id, valid_from, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        id, category, key, semanticSlot, value, interfaceLocale, tier, memoryType, topic, importance, confidence,
-        sensitive ? 1 : 0, status, sourceConversationId, sourceMessageId, now, now, now,
-      )
-      addMemoryRevision(id, null, value, 'create', sourceConversationId, sourceMessageId)
-    }
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
+  const interfaceLocale = normalizeUiLocale(request.body?.interfaceLocale, current.ui.locale)
+  // A saved word keeps the language it was learned in, which may no longer be the current target language.
+  const passageLanguageCode = String(word.language || current.learning.targetLanguageCode).split('-')[0].toLowerCase()
+  const conversation = word.conversation_id
+    ? row<Record<string, any>>('SELECT * FROM conversations WHERE id = ?', word.conversation_id)
+    : undefined
+  const setup = conversation ? setupForConversation(conversation) : null
+  const cacheKey = translationCacheKey({ content: passage, targetLanguageCode: passageLanguageCode, interfaceLocale, setup })
+  const cached = row<{ translation: string }>('SELECT translation FROM translation_cache WHERE cache_key = ?', cacheKey)
+  if (cached) {
+    db.prepare('UPDATE translation_cache SET hit_count = hit_count + 1, last_accessed = ? WHERE cache_key = ?').run(new Date().toISOString(), cacheKey)
+    return { translation: cached.translation, interfaceLocale, cached: true, cacheSource: 'shared' }
   }
-  return { id, action: existing ? 'update' : 'create' }
+  const running = inFlightTranslations.get(cacheKey)
+  if (running) return { translation: await running, interfaceLocale, cached: true, cacheSource: 'inflight' }
+  const task = (async () => {
+    const generated = await translateMessage(passage, setup, interfaceLocale, passageLanguageCode)
+    const now = new Date().toISOString()
+    db.prepare(`INSERT INTO translation_cache (cache_key, translation, created_at, last_accessed)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(cache_key) DO UPDATE SET translation = excluded.translation, last_accessed = excluded.last_accessed`).run(cacheKey, generated, now, now)
+    db.prepare(`DELETE FROM translation_cache WHERE cache_key IN (
+      SELECT cache_key FROM translation_cache ORDER BY last_accessed DESC LIMIT -1 OFFSET 2000
+    )`).run()
+    return generated
+  })()
+  inFlightTranslations.set(cacheKey, task)
+  try { return { translation: await task, interfaceLocale, cached: false, cacheSource: 'generated' } }
+  finally { if (inFlightTranslations.get(cacheKey) === task) inFlightTranslations.delete(cacheKey) }
 })
 
-app.post<{ Body: { interfaceLocale?: string } }>('/api/memories/localize', async (request) => {
-  const current = await getConfig()
-  const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
-  const stored = rows<Record<string, any>>(`SELECT id, category, key, semantic_slot AS semanticSlot, value, tier,
-    interface_locale AS interfaceLocale, localized_values_json AS localizedValuesJson, memory_type AS memoryType, topic, importance, pinned, confidence, sensitive, status,
-    source_conversation_id AS sourceConversationId, source_message_id AS sourceMessageId,
-    last_used_at AS lastUsedAt, use_count AS useCount, last_mentioned_at AS lastMentionedAt,
-    mention_count AS mentionCount, created_at AS createdAt, updated_at AS updatedAt
-    FROM memories ORDER BY CASE WHEN tier = 'core' THEN 0 ELSE 1 END, pinned DESC, importance DESC, updated_at DESC`)
-  await ensureMemoryLocalizations(stored, interfaceLocale)
-  return stored.map((memory) => {
-    return memoryForInterface(memory, interfaceLocale)
-  })
+app.delete<{ Params: { id: string } }>('/api/words/:id', async (request) => { db.prepare('DELETE FROM word_entries WHERE id = ?').run(request.params.id); return { ok: true } })
+
+app.get('/api/reviews/due', async () => rows<Record<string, any>>('SELECT * FROM word_entries WHERE due_at <= ? ORDER BY due_at LIMIT 30', new Date().toISOString())
+  .map((word) => ({ ...wordPayload(word), nextReview: reviewPreview(word as WordRow) })))
+
+app.post<{ Params: { id: string }; Body: { rating: 1 | 2 | 3 | 4 } }>('/api/reviews/:id', async (request) => {
+  const rating = Math.max(1, Math.min(4, Math.round(Number(request.body?.rating)) || 3)) as ReviewRating
+  const result = reviewWord(request.params.id, rating, 'card')
+  if (!result) throw Object.assign(new Error('Word not found'), { statusCode: 404 })
+  // A word that comes back within minutes is shown again in the same sitting, with its new intervals.
+  const word = row<WordRow>('SELECT * FROM word_entries WHERE id = ?', request.params.id)
+  return { ...result, nextReview: word ? reviewPreview(word) : null }
 })
 
-app.put<{ Params: { id: string }; Body: { value: string; status?: string; interfaceLocale?: string } }>('/api/memories/:id', async (request) => {
-  const existing = row<Record<string, any>>('SELECT * FROM memories WHERE id = ?', request.params.id)
-  if (!existing) throw Object.assign(new Error('Memory not found'), { statusCode: 404 })
-  const value = request.body.value?.trim()
-  if (!value) throw Object.assign(new Error('Memory value is required.'), { statusCode: 400 })
-  const current = await getConfig()
-  const interfaceLocale = normalizeUiLocale(request.body.interfaceLocale, current.ui.locale)
-  const now = new Date().toISOString()
-  db.exec('BEGIN IMMEDIATE')
-  try {
-    addMemoryRevision(existing.id, existing.value, value, 'edit', existing.source_conversation_id, existing.source_message_id)
-    db.prepare("UPDATE memories SET value = ?, interface_locale = ?, localized_values_json = '{}', status = COALESCE(?, status), updated_at = ? WHERE id = ?").run(value, interfaceLocale, request.body.status || null, now, request.params.id)
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
-  return { ok: true }
-})
-
-app.patch<{ Params: { id: string }; Body: { tier: 'core' | 'long_term' } }>('/api/memories/:id/tier', async (request) => {
-  const existing = row<Record<string, any>>('SELECT * FROM memories WHERE id = ?', request.params.id)
-  if (!existing) throw Object.assign(new Error('Memory not found'), { statusCode: 404 })
-  if (!['core', 'long_term'].includes(request.body.tier)) throw Object.assign(new Error('Invalid memory tier'), { statusCode: 400 })
-  if (request.body.tier === 'core') assertCoreMemoryAvailable(existing)
-  if (existing.tier === request.body.tier) return { ok: true }
-  const now = new Date().toISOString()
-  db.exec('BEGIN IMMEDIATE')
-  try {
-    addMemoryRevision(existing.id, existing.value, existing.value, request.body.tier === 'core' ? 'promote' : 'demote', existing.source_conversation_id, existing.source_message_id)
-    db.prepare('UPDATE memories SET tier = ?, pinned = ?, updated_at = ? WHERE id = ?').run(request.body.tier, request.body.tier === 'core' ? 1 : 0, now, request.params.id)
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
-  return { ok: true }
-})
-
-app.delete<{ Params: { id: string } }>('/api/memories/:id', async (request) => {
-  const result = db.prepare('DELETE FROM memories WHERE id = ?').run(request.params.id)
-  if (!result.changes) throw Object.assign(new Error('Memory not found'), { statusCode: 404 })
-  return { ok: true }
+registerMemoryRoutes(app)
+registerProficiencyRoutes(app)
+registerPlacementRoutes(app)
+registerConversationHelpRoutes(app)
+registerRecapRoutes(app)
+registerSpeechRoutes(app)
+registerUsageRoutes(app)
+registerProfileRoutes(app, { busy: () => inFlightTurns.size > 0 })
+registerProgressRoutes(app)
+registerLiveRoutes(app)
+registerLanRoutes(app, { port: () => Number(process.env.PORT || config.server.port) })
+registerWordbookRoutes(app, {
+  createConversation: (setup, interfaceLocale, learning, title, start) => createConversationRecord(setup, interfaceLocale, learning, title, undefined, start),
 })
 
 app.get('/api/export', async () => ({
-  format: 'local-language-coach-backup', version: 2, exportedAt: new Date().toISOString(),
+  format: 'local-language-coach-backup', version: 3, exportedAt: new Date().toISOString(),
   config: await getConfig(),
-  conversations: rows('SELECT * FROM conversations'), messages: rows('SELECT * FROM messages'), episodes: rows('SELECT * FROM conversation_episodes'), words: rows('SELECT * FROM word_entries'), memories: rows('SELECT * FROM memories'), memoryRevisions: rows('SELECT * FROM memory_revisions'),
+  conversations: rows('SELECT * FROM conversations'), messages: rows('SELECT * FROM messages'), episodes: rows('SELECT * FROM conversation_episodes'), sceneAnchors: rows('SELECT * FROM scene_anchors'), sceneBackgrounds: rows('SELECT * FROM scene_backgrounds'), sceneRuns: rows('SELECT * FROM scene_runs'), words: rows('SELECT * FROM word_entries'), memories: rows('SELECT * FROM memories'), memoryRevisions: rows('SELECT * FROM memory_revisions'), memorySources: rows('SELECT * FROM memory_sources'), conversationMemories: rows('SELECT * FROM conversation_memories'), learningEvents: rows('SELECT * FROM learning_events'), memorySuggestions: rows('SELECT * FROM memory_suggestions'),
+  // Version 3 adds the level, the tests and signals behind it, look-backs and practice, and what the wordbook keeps beyond the words.
+  proficiencyProfiles: rows('SELECT * FROM proficiency_profiles'), proficiencyHistory: rows('SELECT * FROM proficiency_history'), placementSessions: rows('SELECT * FROM placement_sessions'), turnSignals: rows('SELECT * FROM turn_signals'), conversationAssessments: rows('SELECT * FROM conversation_assessments'),
+  conversationRecaps: rows('SELECT * FROM conversation_recaps'), practiceSets: rows('SELECT * FROM practice_sets'),
+  wordReviews: rows('SELECT * FROM word_reviews'), conversationWords: rows('SELECT * FROM conversation_words'), wordStories: rows('SELECT * FROM word_stories'), contentImports: rows('SELECT * FROM content_imports'), learningPaths: rows('SELECT * FROM learning_paths'),
+  liveSessions: rows('SELECT * FROM live_sessions'),
 }))
+
 
 const webRoot = path.resolve(process.cwd(), 'dist/web')
 if (existsSync(webRoot)) {
@@ -1044,7 +1185,9 @@ if (existsSync(webRoot)) {
 
 if (process.env.NODE_ENV !== 'test') {
   const port = Number(process.env.PORT || config.server.port)
-  await app.listen({ host: '127.0.0.1', port })
+  // Every interface only when the learner has opened the app to the home network; the request guard decides who gets in.
+  await app.listen({ host: config.server.lan ? '0.0.0.0' : '127.0.0.1', port })
+  setLanListening(Boolean(config.server.lan))
   if (runtimeFile) {
     const runtime = { version: 1, pid: process.pid, url: `http://127.0.0.1:${port}`, port, mode: 'start', startedAt: new Date().toISOString() }
     const temporary = `${runtimeFile}.${process.pid}.tmp`

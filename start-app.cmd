@@ -2,6 +2,9 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
+rem The installer's own copy of Node.js, when it had to bring one.
+if exist "%~dp0.runtime\node\node.exe" set "PATH=%~dp0.runtime\node;%PATH%"
+
 where node >nul 2>nul
 if errorlevel 1 (
   echo 无法启动：没有找到 Node.js。

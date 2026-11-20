@@ -1,62 +1,6 @@
-Personal Learning Use License 1.0
-
 Copyright (c) 2026 YQS
 
-1. Permission
+This project may not be used commercially. Commercial use requires prior
+authorization from the author.
 
-Subject to the terms of this License, the copyright holder grants any natural
-person a non-exclusive, worldwide, royalty-free license to view, download,
-install, run, copy, and modify this software and its documentation (the
-"Software") solely for that person's own personal, non-commercial learning,
-study, and experimentation.
-
-2. No Commercial or Organizational Use
-
-The Software, including modified versions and derivative works, may not be
-used for any commercial, business, professional, institutional, or
-revenue-generating purpose.
-
-Prohibited use includes, without limitation:
-
-- use by or for a company, employer, client, commercial organization, or other
-  legal entity;
-- sale, rental, sublicensing, monetization, or other commercial exploitation;
-- incorporation into a product or service offered to third parties;
-- operation as a hosted service, software-as-a-service product, API, or other
-  service for third parties; and
-- use in paid teaching, training, consulting, development, or support.
-
-3. Sharing Source Code
-
-You may share the Software or your modifications in source-code form only,
-without charge or commercial benefit, and solely to enable recipients' own
-personal, non-commercial learning, provided that:
-
-- this License and all copyright notices remain included;
-- modified files are clearly identified as modified; and
-- the shared Software remains subject to this License in full.
-
-You may not distribute compiled or packaged versions of the Software, and you
-may not grant recipients any broader rights than this License provides.
-
-4. No Other Rights
-
-No trademark, patent, or other intellectual-property rights are granted except
-for the limited copyright permission expressly stated in this License. Any use
-outside these terms requires prior written permission from the copyright
-holder.
-
-5. Termination
-
-Your rights under this License terminate automatically if you violate any of
-its terms. Upon termination, you must stop using the Software and delete all
-copies in your possession or control.
-
-6. Disclaimer of Warranty and Limitation of Liability
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+本项目不可商用。如需商用，请事先联系作者并获得授权。

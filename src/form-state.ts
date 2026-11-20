@@ -12,6 +12,11 @@ export function learningPreferencesKey(value: LearningPreferences) {
     value.learning.proficiency,
     value.learning.correctionLevel,
     value.learning.speechRate ?? DEFAULT_SPEECH_RATE,
+    value.learning.reviewInConversation !== false,
+    value.learning.voiceInput === 'model' ? 'model' : 'browser',
+    value.learning.listenFirst === true,
+    value.learning.variant || '',
+    value.learning.register || 'neutral',
   ])
 }
 

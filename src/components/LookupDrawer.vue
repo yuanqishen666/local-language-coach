@@ -8,7 +8,7 @@ import AppIcon from './AppIcon.vue'
 import SpeakButton from './SpeakButton.vue'
 
 const sessionCache = new Map<string, TermLookup>()
-const props = defineProps<{ term: string; sentence: string; conversationId: string; open: boolean; setup?: unknown }>()
+const props = defineProps<{ term: string; sentence: string; conversationId: string; open: boolean; setup?: unknown; targetLanguageCode?: string }>()
 const emit = defineEmits<{ close: [] }>()
 const store = useAppStore()
 const { t, locale } = useI18n()
@@ -27,7 +27,7 @@ function cacheKey() {
     normalized(props.term),
     normalized(props.sentence),
     props.setup || null,
-    store.settings?.learning.targetLanguageCode || '',
+    targetLanguageCode.value,
     String(locale.value).toLowerCase(),
   ])
 }
@@ -37,7 +37,8 @@ function remember(key: string, value: TermLookup) {
   sessionCache.set(key, value)
 }
 
-const targetLanguageCode = computed(() => store.settings?.learning.targetLanguageCode || 'en')
+// The conversation's own learning language when the page passes one; otherwise the current setting.
+const targetLanguageCode = computed(() => props.targetLanguageCode || store.settings?.learning.targetLanguageCode || 'en')
 const collocations = computed(() => ((data.value?.collocations || []) as unknown[]).map((item) => {
   if (typeof item === 'string') return { phrase: item, meaning: '' }
   if (!item || typeof item !== 'object') return { phrase: '', meaning: '' }
@@ -49,7 +50,7 @@ const collocations = computed(() => ((data.value?.collocations || []) as unknown
 }).filter((item) => item.phrase))
 
 watch(
-  () => [props.open, props.term, props.sentence, props.setup, store.settings?.learning.targetLanguageCode, locale.value],
+  () => [props.open, props.term, props.sentence, props.setup, targetLanguageCode.value, locale.value],
   async () => {
     const version = ++requestVersion
     if (!props.open || !props.term) {
@@ -73,6 +74,7 @@ watch(
         sentence: props.sentence,
         setup: props.setup,
         interfaceLocale: String(locale.value),
+        conversationId: props.conversationId,
       })
       if (version !== requestVersion) return
       remember(key, result.lookup)
@@ -92,7 +94,7 @@ async function save() {
     term: props.term,
     lemma: data.value.lemma,
     meaning: data.value.contextMeaning,
-    language: store.settings.learning.targetLanguageCode,
+    language: targetLanguageCode.value,
     interfaceLocale: String(locale.value),
     details: data.value,
     sourceSentence: props.sentence,

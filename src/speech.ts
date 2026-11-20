@@ -105,8 +105,24 @@ function voiceQualityScore(voice: SpeechVoiceLike) {
   return -1
 }
 
+/**
+ * The regional variety the learner chose for a language, as a speech locale: "en-GB". A voice of that
+ * region is taken first; any other voice of the language still serves when the browser has none.
+ */
+const chosenLocales = new Map<string, string>()
+
+export function chooseSpeechLocale(languageCode: string, locale: string) {
+  const base = localeBase(languageCode)
+  if (locale) chosenLocales.set(base, locale)
+  else chosenLocales.delete(base)
+}
+
+export function chosenSpeechLocale(languageCode: string) {
+  return chosenLocales.get(localeBase(languageCode)) || ''
+}
+
 export function speechLocaleFor(languageCode: string) {
-  return targetLanguage(languageCode).locale
+  return chosenSpeechLocale(languageCode) || targetLanguage(languageCode).locale
 }
 
 function voiceScore(voice: SpeechVoiceLike, requestedLocale: string) {

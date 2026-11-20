@@ -1,10 +1,14 @@
 import { z } from 'zod'
+import { ERROR_CATEGORIES, MEMORY_KINDS } from '../../shared/memory.js'
+import { CERTAINTIES } from '../../shared/variants.js'
 
 const correctionSchema = z.object({
   original: z.string(),
   improved: z.string(),
   explanation: z.string(),
   severity: z.enum(['meaning', 'naturalness', 'minor']),
+  category: z.enum(ERROR_CATEGORIES),
+  certainty: z.enum(CERTAINTIES),
 })
 
 const reconstructionSchema = z.object({
@@ -64,10 +68,14 @@ export const memoryAnalysisSchema = z.object({
     value: z.string(),
     quote: z.string(),
     sensitive: z.boolean(),
-    memoryType: z.enum(['preference', 'constraint', 'profile', 'learning', 'episodic']),
+    memoryType: z.enum(MEMORY_KINDS),
     topic: z.string(),
     importance: z.number(),
     suggestedTier: z.enum(['core', 'long_term']),
+    about: z.enum(['user', 'persona', 'other']),
+    durability: z.enum(['lasting', 'temporary', 'momentary']),
+    validDays: z.number(),
+    explicit: z.boolean(),
   })),
   replyType: z.enum(['casual', 'recommendation', 'planning', 'learning', 'factual', 'support', 'other']),
   relevantTopics: z.array(z.string()),
@@ -78,6 +86,7 @@ export const memoryAnalysisSchema = z.object({
 /** The only synchronous contract used for a conversation turn. */
 export const coachTurnSchema = z.object({
   roleReply: z.string(),
+  aside: z.string(),
   reconstruction: reconstructionSchema.nullable(),
   corrections: z.array(correctionSchema),
   lookup: lookupDecisionSchema,
@@ -95,6 +104,28 @@ export const coachTurnSchema = z.object({
   }),
 })
 
+export const sceneParticipantSchema = z.object({
+  name: z.string(),
+  role: z.string(),
+  relationship: z.string(),
+})
+
+export const localStyleCardSchema = z.object({
+  locale: z.string(),
+  register: z.string(),
+  relationshipDistance: z.string(),
+  addressNorms: z.array(z.string()),
+  turnTaking: z.array(z.string()),
+  pragmaticNotes: z.array(z.string()),
+  avoidPhrases: z.array(z.string()),
+})
+
+export const sceneFactPolicySchema = z.object({
+  stableFacts: z.array(z.string()),
+  doNotAssert: z.array(z.string()),
+  asOf: z.string(),
+})
+
 export const setupCandidateSchema = z.object({
   title: z.string(),
   category: z.string(),
@@ -109,6 +140,58 @@ export const setupCandidateSchema = z.object({
   topicSeed: z.string(),
   openingLine: z.string(),
   difficulty: z.string(),
+  participants: z.array(sceneParticipantSchema).optional(),
+  localStyle: localStyleCardSchema.optional(),
+  factPolicy: sceneFactPolicySchema.optional(),
+  initiativeMode: z.enum(['FOLLOW', 'CO_LEAD', 'LEAD']).optional(),
+  openingAct: z.string().optional(),
+  encounterSummary: z.string().optional(),
+  safetyClass: z.enum(['normal', 'sensitive-expression-only']).optional(),
+})
+
+export const sceneBackgroundSeedSchema = z.object({
+  candidateId: z.string(),
+  identityKey: z.string(),
+  title: z.string(),
+  setting: z.string(),
+  partnerRole: z.string(),
+  relationship: z.string(),
+  sharedContext: z.string(),
+  registerHint: z.string(),
+  openAffordances: z.array(z.string()),
+  destinationSpecificity: z.enum(['not_applicable', 'generic', 'local']),
+  participants: z.array(sceneParticipantSchema),
+  localStyle: localStyleCardSchema,
+  factPolicy: sceneFactPolicySchema,
+  safetyClass: z.enum(['normal', 'sensitive-expression-only']),
+})
+
+export const sceneBackgroundSeedsSchema = z.object({
+  backgrounds: z.array(sceneBackgroundSeedSchema),
+})
+
+export const sceneEncounterCandidateSchema = z.object({
+  candidateId: z.string(),
+  transientState: z.string(),
+  socialEnergy: z.string(),
+  openingAct: z.string(),
+  initialAffordance: z.string(),
+  initiativeMode: z.enum(['FOLLOW', 'CO_LEAD', 'LEAD']),
+  dynamicSummary: z.string(),
+  setup: setupCandidateSchema,
+})
+
+export const sceneEncounterCandidatesSchema = z.object({
+  encounters: z.array(sceneEncounterCandidateSchema),
+})
+
+export const sceneEncounterCritiqueSchema = z.object({
+  evaluations: z.array(z.object({
+    candidateId: z.string(),
+    eligible: z.boolean(),
+    issues: z.array(z.string()),
+  })),
+  rankedCandidateIds: z.array(z.string()),
 })
 
 export const providerCertificationSchema = z.object({
@@ -122,6 +205,11 @@ export const providerCertificationSchema = z.object({
 
 export const setupCandidatesSchema = z.object({
   setups: z.array(setupCandidateSchema),
+})
+
+/** Suggestions for what to talk about next also say which saved words and which weak spot each one suits. */
+export const pathCandidatesSchema = z.object({
+  setups: z.array(setupCandidateSchema.extend({ practiceWords: z.array(z.string()), weakSpot: z.string() })),
 })
 
 export const episodeSummarySchema = z.object({
@@ -152,6 +240,28 @@ export const translationSchema = z.object({ translation: z.string() })
 
 export const memoryLocalizationSchema = z.object({
   items: z.array(z.object({ id: z.string(), value: z.string() })),
+})
+
+/** What tidying up after a conversation may propose. Nothing in it is applied without the learner's say. */
+export const memoryConsolidationSchema = z.object({
+  promotions: z.array(z.object({
+    conversationMemoryId: z.string(),
+    value: z.string(),
+    memoryType: z.enum(MEMORY_KINDS),
+    durability: z.enum(['lasting', 'temporary']),
+    validDays: z.number(),
+    note: z.string(),
+  })),
+  conflicts: z.array(z.object({
+    memoryId: z.string(),
+    conversationMemoryId: z.string(),
+    value: z.string(),
+    note: z.string(),
+  })),
+  stale: z.array(z.object({
+    memoryId: z.string(),
+    note: z.string(),
+  })),
 })
 
 export const termLookupSchema = z.object({

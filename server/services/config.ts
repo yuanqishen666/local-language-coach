@@ -1,7 +1,7 @@
 import { constants, copyFile, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import type { AppConfig, ProviderConfig } from '../types.js'
+import type { AppConfig, LearnerProfile, ProviderConfig } from '../types.js'
 import { UI_LOCALES } from '../../shared/locales.js'
 import { DEFAULT_SPEECH_RATE, MAX_SPEECH_RATE, MIN_SPEECH_RATE } from '../../shared/speech.js'
 
@@ -18,10 +18,52 @@ const providerDefaults: ProviderConfig[] = [
   { id: 'kimi', name: 'Moonshot / Kimi', kind: 'kimi', baseUrl: 'https://api.moonshot.ai/v1', model: '', apiKeySecret: 'providers.kimi.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200, modelProfiles: {} },
 ]
 
+/** The one provider whose address and name are the learner's own: any service that speaks the OpenAI chat interface. */
+export const CUSTOM_PROVIDER_ID = 'custom'
+export const DEFAULT_PROFILE_ID = 'default'
+export const MAX_PROFILES = 12
+
+export function customProvider(name: string, baseUrl: string): ProviderConfig {
+  return { id: CUSTOM_PROVIDER_ID, name, kind: 'openai', baseUrl, model: '', apiKeySecret: 'providers.custom.apiKey', enabled: false, contextWindowTokens: 32_768, maxOutputTokens: 1_200, modelProfiles: {} }
+}
+
+export function isHttpUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || !value || value.length > 300) return false
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password
+  } catch {
+    return false
+  }
+}
+
+function isCustomEndpoint(provider: ProviderConfig) {
+  return provider.kind === 'openai' && provider.apiKeySecret === 'providers.custom.apiKey' &&
+    typeof provider.name === 'string' && provider.name.trim().length > 0 && provider.name.length <= 60 && isHttpUrl(provider.baseUrl)
+}
+
+function validateProfiles(value: Record<string, any>) {
+  if (value.profiles === undefined) {
+    if (value.activeProfile !== undefined && value.activeProfile !== DEFAULT_PROFILE_ID) throw new Error('The active profile is invalid')
+    return
+  }
+  if (!Array.isArray(value.profiles) || !value.profiles.length || value.profiles.length > MAX_PROFILES) throw new Error('The profile list is invalid')
+  const ids = new Set<string>()
+  for (const item of value.profiles as LearnerProfile[]) {
+    const profile = record(item)
+    if (typeof profile.id !== 'string' || !/^[a-z0-9]{1,24}$/u.test(profile.id) || ids.has(profile.id)) throw new Error('A profile id is invalid')
+    if (typeof profile.name !== 'string' || profile.name.length > 40 || typeof profile.createdAt !== 'string') throw new Error('A profile is incomplete')
+    if (profile.uiLocale !== undefined && !UI_LOCALES.includes(profile.uiLocale)) throw new Error('A profile language is invalid')
+    if (profile.learning !== undefined) record(profile.learning)
+    ids.add(profile.id)
+  }
+  if (value.activeProfile !== undefined && !ids.has(value.activeProfile)) throw new Error('The active profile is invalid')
+}
+
 export const defaultConfig: AppConfig = {
   setupComplete: false,
   ui: { locale: 'zh-CN' },
-  learning: { targetLanguage: 'English', targetLanguageCode: 'en', proficiency: 'B1', correctionLevel: 'balanced', speechRate: DEFAULT_SPEECH_RATE },
+  learning: { targetLanguage: 'English', targetLanguageCode: 'en', proficiency: 'B1', correctionLevel: 'balanced', speechRate: DEFAULT_SPEECH_RATE, reviewInConversation: true },
   llm: { defaultProvider: '', temperature: 0.7 },
   webLookup: { enabled: false, provider: 'selected', timeoutMs: 8_000, maxResults: 5 },
   server: { host: '127.0.0.1', port: 4174 },
@@ -50,14 +92,31 @@ export function validateConfig(input: AppConfig): AppConfig {
     (typeof learning.speechRate !== 'number' || !Number.isFinite(learning.speechRate) || learning.speechRate < MIN_SPEECH_RATE || learning.speechRate > MAX_SPEECH_RATE)) {
     throw new Error('Speech rate is invalid')
   }
+  if (learning.reviewInConversation !== undefined && typeof learning.reviewInConversation !== 'boolean') throw new Error('Review setting is invalid')
+  if (learning.voiceInput !== undefined && learning.voiceInput !== 'browser' && learning.voiceInput !== 'model') throw new Error('Voice input setting is invalid')
+  if (learning.listenFirst !== undefined && typeof learning.listenFirst !== 'boolean') throw new Error('Listening setting is invalid')
+  if (learning.variant !== undefined && (typeof learning.variant !== 'string' || learning.variant.length > 12)) throw new Error('Language variety is invalid')
+  if (learning.register !== undefined && !['neutral', 'casual', 'formal'].includes(learning.register)) throw new Error('Register setting is invalid')
+  if (llm.reviewProvider !== undefined && typeof llm.reviewProvider !== 'string') throw new Error('Review model setting is invalid')
+  if (value.usage !== undefined) {
+    const limit = record(value.usage).monthlyLimit
+    if (limit !== undefined && (typeof limit !== 'number' || !Number.isFinite(limit) || limit < 0 || limit > 100_000)) throw new Error('Spending reminder is invalid')
+  }
+  validateProfiles(value)
   if (!Number.isFinite(llm.temperature) || typeof llm.defaultProvider !== 'string') throw new Error('Model settings are incomplete')
   if (webLookup.provider !== 'selected' || typeof webLookup.enabled !== 'boolean') throw new Error('Web lookup settings are invalid')
   if (!Number.isInteger(webLookup.timeoutMs) || webLookup.timeoutMs < 2_000 || webLookup.timeoutMs > 20_000) throw new Error('Web lookup timeout is invalid')
   if (!Number.isInteger(webLookup.maxResults) || webLookup.maxResults < 1 || webLookup.maxResults > 10) throw new Error('Web lookup result limit is invalid')
-  if (typeof server.host !== 'string' || !Number.isInteger(server.port)) throw new Error('Server settings are invalid')
-  if (!Array.isArray(value.providers) || value.providers.length !== providerDefaults.length) throw new Error('The provider list does not match the current schema')
+  if (typeof server.host !== 'string' || !Number.isInteger(server.port) || (server.lan !== undefined && typeof server.lan !== 'boolean')) throw new Error('Server settings are invalid')
+  // Absent means off: tidying memories after a conversation costs a model call the learner has to ask for.
+  if (value.memory !== undefined && (record(value.memory).consolidate !== undefined && typeof record(value.memory).consolidate !== 'boolean')) throw new Error('Memory settings are invalid')
+  if (!Array.isArray(value.providers)) throw new Error('The provider list does not match the current schema')
+  const custom = value.providers.find((item: ProviderConfig) => item?.id === CUSTOM_PROVIDER_ID) as ProviderConfig | undefined
+  if (value.providers.length !== providerDefaults.length + (custom ? 1 : 0)) throw new Error('The provider list does not match the current schema')
+  if (custom && !isCustomEndpoint(custom)) throw new Error('The custom endpoint is invalid')
+  const expectedProviders = custom ? [...providerDefaults, custom] : providerDefaults
 
-  const providers = providerDefaults.map((expected) => {
+  const providers = expectedProviders.map((expected) => {
     const provider = record(value.providers.find((item: ProviderConfig) => item?.id === expected.id)) as ProviderConfig
     if (provider.name !== expected.name || provider.kind !== expected.kind || provider.baseUrl !== expected.baseUrl || provider.apiKeySecret !== expected.apiKeySecret) {
       throw new Error(`Provider identity is invalid: ${expected.id}`)
@@ -78,16 +137,23 @@ export function validateConfig(input: AppConfig): AppConfig {
     }
     if (provider.capability) {
       const capability = provider.capability
-      if (capability.conversationReady !== true || capability.lookupReady !== true ||
+      const lookupChecked = capability.lookupReady === true || (expected.id === CUSTOM_PROVIDER_ID && capability.lookupReady === false)
+      if (capability.conversationReady !== true || !lookupChecked ||
         !Number.isInteger(capability.contractVersion) || capability.contractVersion < 1 ||
         capability.baseUrl.replace(/\/$/, '') !== provider.baseUrl.replace(/\/$/, '') || capability.model !== provider.model ||
         !['json_schema', 'json_object', 'prompt_json'].includes(capability.outputMode) || typeof capability.testedAt !== 'string') {
         throw new Error(`Provider capability is stale or invalid: ${expected.id}`)
       }
     }
+    if (provider.price !== undefined) {
+      const price = record(provider.price)
+      const valid = (amount: unknown) => typeof amount === 'number' && Number.isFinite(amount) && amount >= 0 && amount <= 10_000
+      if (!valid(price.input) || !valid(price.output)) throw new Error(`Price is invalid: ${expected.id}`)
+    }
     return structuredClone(provider)
   })
   if (llm.defaultProvider && !providers.some((provider) => provider.id === llm.defaultProvider)) throw new Error('Default provider is invalid')
+  if (llm.reviewProvider && !providers.some((provider) => provider.id === llm.reviewProvider)) throw new Error('Review provider is invalid')
   return structuredClone(input)
 }
 

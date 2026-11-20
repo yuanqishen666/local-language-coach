@@ -1,0 +1,101 @@
+/* 05 画廊 — a showcase site: grey wall, very large type, mono captions, one lime marker. */
+html[data-lab='gallery']{
+  --c-bg:#ededeb;--c-surface:#fff;--c-sunk:#e3e3e0;--c-field:#fff;
+  --c-ink:#0e0e0e;--c-soft:rgba(14,14,14,.62);--c-mute:rgba(14,14,14,.42);--c-line:rgba(14,14,14,.12);--c-line-strong:rgba(14,14,14,.2);
+  --c-accent:#d4ff3f;--c-on-accent:#0e0e0e;--c-accent-ink:#0e0e0e;--c-tint:rgba(14,14,14,.1);
+  --c-danger:#d0341c;--c-danger-tint:rgba(208,52,28,.09);--c-ok:#0f7a45;--c-ok-tint:rgba(15,122,69,.1);
+  --c-r:16px;--c-r-l:22px;--c-r-s:10px;--c-r-xs:8px;--c-r-btn:999px;
+  --c-font:'Helvetica Neue',Helvetica,Arial,'Noto Sans SC Variable','PingFang SC',sans-serif;--c-display:var(--c-font);--c-mono:ui-monospace,'SF Mono',Menlo,monospace;
+  --c-weight:400;--c-btn-weight:500;
+  --c-title-size:clamp(52px,8vw,124px);--c-title-weight:500;--c-title-track:-.055em;--c-title-lh:.95;
+  --c-h2-size:11px;--c-h2-weight:500;--c-h2-font:var(--c-mono);--c-h2-track:.08em;--c-h2-case:uppercase;--c-h2-ink:var(--c-soft);
+  --c-label-font:var(--c-mono);--c-label-size:10.5px;--c-label-weight:500;--c-label-track:.08em;--c-label-case:uppercase;
+  --c-ease:cubic-bezier(.19,1,.22,1);--c-spring:cubic-bezier(.19,1,.22,1);--c-lift:translateY(-3px);
+  --c-pop:0 30px 80px rgba(0,0,0,.18);--c-card-border:0;
+  --c-row-pad:18px 4px;--c-row-hover:transparent;--c-row-on:transparent;
+  --c-them-bg:var(--c-surface);--c-me-bg:var(--c-ink);--c-me-ink:#fff;--c-mark:var(--c-accent);--c-mark-hot:rgba(212,255,63,.3);
+  --c-bubble-r:18px;--c-bubble-tail:4px;
+  --c-page-w:1320px;--c-page-pad:124px 40px 120px;--c-head-gap:44px;--c-sticky:96px;
+  --c-tip-r:99px;
+}
+html[data-lab='gallery'] .lab-tip{padding:7px 12px;background:var(--c-accent);color:#0e0e0e;font-weight:500}
+html[data-lab='gallery'] .th ::selection{background:var(--c-accent)}
+
+/* type */
+html[data-lab='gallery'] :is(.c-btn,.st-btn,.c-textbtn,.c-speak,.c-seg button){font-weight:500}
+html[data-lab='gallery'] .c-field label,html[data-lab='gallery'] .st-field>label,html[data-lab='gallery'] .st-label,html[data-lab='gallery'] .st-row label{color:var(--c-soft);font:500 10.5px/1.3 var(--c-mono);letter-spacing:.08em;text-transform:uppercase}
+html[data-lab='gallery'] .c-btn.primary:hover:not(:disabled),html[data-lab='gallery'] .st-btn.primary:hover:not(:disabled){background:var(--c-accent);color:#0e0e0e}
+html[data-lab='gallery'] .c-seg{padding:0;gap:4px;background:none}
+html[data-lab='gallery'] .c-seg button{height:36px;border:1px solid var(--c-line-strong);border-radius:99px}
+html[data-lab='gallery'] .c-seg button[aria-pressed='true']{border-color:var(--c-ink);background:var(--c-ink);color:#fff;box-shadow:none}
+html[data-lab='gallery'] .c-seg em{color:inherit;font-family:var(--c-mono);opacity:.6}
+html[data-lab='gallery'] .c-seg.quiet button{height:30px;border-color:transparent}
+html[data-lab='gallery'] .c-seg.quiet button[aria-pressed='true']{border-color:var(--c-ink);background:none;color:var(--c-ink)}
+html[data-lab='gallery'] .c-tag{border-radius:99px;font:500 10.5px/1 var(--c-mono);letter-spacing:.06em;text-transform:uppercase}
+html[data-lab='gallery'] :is(.c-input,.c-search,.st-select,.st-input){border-color:transparent}
+html[data-lab='gallery'] :is(.c-own,.c-group,.c-card,.c-entry,.st-provider,.c-sheet){--c-field:var(--c-bg)}
+html[data-lab='gallery'] :is(.c-input,.st-select,.st-input):focus,html[data-lab='gallery'] .c-search:focus-within{border-color:var(--c-ink);box-shadow:none}
+
+/* lists read like an index: big lines, hairlines, the row slides when pointed at */
+html[data-lab='gallery'] .c-list{border-top:1px solid var(--c-ink)}
+html[data-lab='gallery'] .c-row-main b,html[data-lab='gallery'] .c-word b{font-size:20px;font-weight:500;letter-spacing:-.025em}
+html[data-lab='gallery'] .c-row-main{transition:transform .6s var(--c-ease)}
+html[data-lab='gallery'] .c-talk:hover .c-row-main{transform:translateX(12px)}
+html[data-lab='gallery'] .c-word{transition:padding .6s var(--c-ease),box-shadow .2s}
+html[data-lab='gallery'] .c-word:hover,html[data-lab='gallery'] .c-word.on{padding-left:16px}
+html[data-lab='gallery'] .c-row time{font:500 11px/1 var(--c-mono);letter-spacing:.04em}
+html[data-lab='gallery'] .c-word{min-height:60px}
+html[data-lab='gallery'] .c-word.on{box-shadow:inset 0 -1px 0 var(--c-ink)}
+html[data-lab='gallery'] .c-group{--c-row-pad:10px 6px 10px 10px}
+html[data-lab='gallery'] .c-group>.c-list{border-top:0}
+html[data-lab='gallery'] .c-group h2{font-size:20px;font-weight:500;letter-spacing:-.025em}
+html[data-lab='gallery'] .c-group>summary{min-height:68px;padding:0 22px}
+html[data-lab='gallery'] .c-group>summary em,html[data-lab='gallery'] .c-count,html[data-lab='gallery'] .c-quota,html[data-lab='gallery'] .c-left span{font-family:var(--c-mono);letter-spacing:.04em}
+html[data-lab='gallery'] .c-mem:hover{background:var(--c-bg)}
+@media (hover:hover){
+  html[data-lab='gallery'] .c-row-go,html[data-lab='gallery'] .c-preset:not(.going) .c-preset-go{display:none}
+}
+
+/* conversation */
+html[data-lab='gallery'] .c-conv-bar h1{font-size:15px;font-weight:500;letter-spacing:-.01em}
+html[data-lab='gallery'] .c-conv-bar time{font:500 11px/1 var(--c-mono);letter-spacing:.04em}
+html[data-lab='gallery'] .c-write{border-color:transparent}
+html[data-lab='gallery'] .c-write:focus-within{border-color:var(--c-ink);box-shadow:none}
+html[data-lab='gallery'] .c-send:not(:disabled){background:var(--c-ink);color:#fff}
+html[data-lab='gallery'] .c-send:hover:not(:disabled){background:var(--c-accent);color:#0e0e0e}
+html[data-lab='gallery'] .c-note:hover,html[data-lab='gallery'] .c-note.hot{border-left-color:var(--c-ink)}
+html[data-lab='gallery'] .c-note strong,html[data-lab='gallery'] .c-fold>summary,html[data-lab='gallery'] .c-senses b{font-weight:500}
+html[data-lab='gallery'] .c-notes-toggle{background:var(--c-surface);border-color:transparent}
+html[data-lab='gallery'] .c-icon:hover{background:var(--c-surface)}
+html[data-lab='gallery'] :is(.c-sheet,.c-entry,.c-card,.c-dialog,.c-group) .c-icon:hover{background:var(--c-bg)}
+
+/* cards and the review marker */
+html[data-lab='gallery'] .c-preset b,html[data-lab='gallery'] .c-person h3{font-size:22px;font-weight:500;letter-spacing:-.03em;line-height:1.15}
+html[data-lab='gallery'] .c-preset{min-height:170px;padding:22px;transition:transform .6s var(--c-ease),background .3s,color .3s}
+html[data-lab='gallery'] .c-preset:hover:not(:disabled){background:var(--c-ink);color:#fff}
+html[data-lab='gallery'] .c-preset:hover:not(:disabled) small{color:rgba(255,255,255,.66)}
+html[data-lab='gallery'] .c-own{padding:32px}
+html[data-lab='gallery'] .c-ask{font-weight:500;letter-spacing:-.03em;font-size:clamp(24px,3vw,38px);line-height:1.3}
+html[data-lab='gallery'] .c-gap.filled{padding:0 .16em;border-bottom-color:transparent;border-radius:6px;background:var(--c-accent)}
+html[data-lab='gallery'] .c-gap i{font-weight:500}
+html[data-lab='gallery'] .c-progress{height:2px}
+html[data-lab='gallery'] .c-progress i{background:var(--c-ink)}
+html[data-lab='gallery'] .c-review{--c-page-w:860px}
+html[data-lab='gallery'] .c-grades button{border-color:transparent;background:var(--c-bg)}
+html[data-lab='gallery'] .c-grades button:hover{background:var(--c-accent);color:#0e0e0e}
+html[data-lab='gallery'] .c-grades b{font-weight:500}
+html[data-lab='gallery'] .c-entry-head h2,html[data-lab='gallery'] .c-sheet-title h2,html[data-lab='gallery'] .c-answer-head h2{letter-spacing:-.04em}
+html[data-lab='gallery'] .c-entry-idle{border-color:var(--c-line-strong)}
+html[data-lab='gallery'] .c-picks button,html[data-lab='gallery'] .c-levels button,html[data-lab='gallery'] .st-choice button,html[data-lab='gallery'] .st-options button{border-color:transparent}
+html[data-lab='gallery'] .c-picks b,html[data-lab='gallery'] .st-choice button{font-weight:500}
+html[data-lab='gallery'] .st-nav button{font-weight:500}
+html[data-lab='gallery'] .st-nav button.on{background:var(--c-ink);color:#fff}
+html[data-lab='gallery'] .st-block h3,html[data-lab='gallery'] .st-remote h3,html[data-lab='gallery'] .st-provider h3,html[data-lab='gallery'] .st-switch b{font-size:18px;font-weight:500;letter-spacing:-.02em}
+html[data-lab='gallery'] .st-state,html[data-lab='gallery'] .st-facts dt{font-family:var(--c-mono);letter-spacing:.04em}
+@media (max-width:760px){
+  html[data-lab='gallery']{--c-title-size:clamp(44px,13vw,64px)}
+  html[data-lab='gallery'] .c-tabs{background:var(--c-ink);border-top:0}
+  html[data-lab='gallery'] .c-tabs>*{color:rgba(255,255,255,.55);font-weight:500}
+  html[data-lab='gallery'] .c-tabs .on{color:#fff}
+  html[data-lab='gallery'] .c-own{padding:20px 18px}
+}

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { getConfig, getSecrets } from '../services/config.js'
 import type { ProviderConfig, ProviderKind } from '../types.js'
+import { meterReply } from '../ai/usage-meter.js'
 import type { LookupCitation, LookupItem, LookupPresentation, ProviderLookupResult } from './types.js'
 
 const lookupProviders = new Set<ProviderKind>(['openai', 'anthropic', 'gemini', 'deepseek', 'kimi'])
@@ -176,6 +177,8 @@ async function searchOpenAi(provider: ProviderConfig, key: string, input: Provid
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify(openAiSearchBody(provider, naturalSearchPrompt(input), input.domain)),
   }, input.timeoutMs)
+  // The per-search fee is not in the token counts; only the tokens are booked.
+  meterReply(provider, json, naturalSearchPrompt(input), '')
   return parseOpenAiSearch(json)
 }
 
@@ -219,6 +222,7 @@ async function searchAnthropic(provider: ProviderConfig, key: string, input: Pro
     headers: { authorization: `Bearer ${key}`, 'anthropic-version': '2026-10-21', 'content-type': 'application/json' },
     body: JSON.stringify(anthropicSearchBody(provider, naturalSearchPrompt(input), input.domain)),
   }, input.timeoutMs)
+  meterReply(provider, json, naturalSearchPrompt(input), '')
   return parseAnthropicSearch(json)
 }
 
@@ -260,6 +264,7 @@ async function searchGemini(provider: ProviderConfig, key: string, input: Provid
     headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
     body: JSON.stringify(geminiSearchBody(provider, naturalSearchPrompt(input))),
   }, input.timeoutMs)
+  meterReply(provider, json, naturalSearchPrompt(input), '')
   return parseGeminiSearch(json)
 }
 

@@ -1,4 +1,6 @@
 import type { ModelMessage } from './provider.js'
+import { MEMORY_LAYER_LIMITS } from '../../shared/memory.js'
+import { layerOf } from '../memory-policy.js'
 import type {
   ConversationEpisode,
   ConversationSetup,
@@ -39,6 +41,11 @@ export function normalizeConversationSetup(value: unknown): ConversationSetup | 
   const title = text(source.title)
   const openingLine = text(source.openingLine)
   if (!title && !openingLine) return null
+  const rawParticipants = Array.isArray(source.participants) ? source.participants : []
+  const rawStyle = record(source.localStyle)
+  const rawPolicy = record(source.factPolicy)
+  const initiativeMode = text(source.initiativeMode)
+  const safetyClass = text(source.safetyClass)
   return {
     title: title || 'Conversation',
     category: text(source.category, 'custom'),
@@ -53,6 +60,28 @@ export function normalizeConversationSetup(value: unknown): ConversationSetup | 
     topicSeed: text(source.topicSeed),
     openingLine,
     difficulty: text(source.difficulty),
+    participants: rawParticipants.map((item) => {
+      const participant = record(item)
+      return { name: text(participant.name), role: text(participant.role), relationship: text(participant.relationship) }
+    }).filter((item) => item.name || item.role).slice(0, 3),
+    localStyle: Object.keys(rawStyle).length ? {
+      locale: text(rawStyle.locale),
+      register: text(rawStyle.register),
+      relationshipDistance: text(rawStyle.relationshipDistance),
+      addressNorms: stringList(rawStyle.addressNorms, 5),
+      turnTaking: stringList(rawStyle.turnTaking, 5),
+      pragmaticNotes: stringList(rawStyle.pragmaticNotes, 6),
+      avoidPhrases: stringList(rawStyle.avoidPhrases, 6),
+    } : undefined,
+    factPolicy: Object.keys(rawPolicy).length ? {
+      stableFacts: stringList(rawPolicy.stableFacts, 8),
+      doNotAssert: stringList(rawPolicy.doNotAssert, 10),
+      asOf: text(rawPolicy.asOf),
+    } : undefined,
+    initiativeMode: ['FOLLOW', 'CO_LEAD', 'LEAD'].includes(initiativeMode) ? initiativeMode as ConversationSetup['initiativeMode'] : undefined,
+    openingAct: text(source.openingAct) || undefined,
+    encounterSummary: text(source.encounterSummary) || undefined,
+    safetyClass: ['normal', 'sensitive-expression-only'].includes(safetyClass) ? safetyClass as ConversationSetup['safetyClass'] : undefined,
   }
 }
 
@@ -255,9 +284,16 @@ export function selectRelevantMemories(
     return { memory, score: semanticMatch + topicMatch + relevance + learningBoost + decisionBoost + coreBoost + importanceBoost + recency - cooldown }
   }).filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((item) => item.memory)
-  return [...alwaysCore, ...routed.filter((memory) => !coreIds.has(text(memory.id) || `${text(memory.category)}:${text(memory.key)}`))]
+  // Each layer has its own allowance, so a run of plans cannot crowd out what is known about the learner.
+  const taken: Record<string, number> = {}
+  const routedMemories = routed.filter((item) => {
+    const layer = layerOf(item.memory.memoryType || item.memory.memory_type)
+    const used = taken[layer] || 0
+    if (used >= Math.min(limit, MEMORY_LAYER_LIMITS[layer])) return false
+    taken[layer] = used + 1
+    return true
+  }).map((item) => item.memory)
+  return [...alwaysCore, ...routedMemories.filter((memory) => !coreIds.has(text(memory.id) || `${text(memory.category)}:${text(memory.key)}`))]
 }
 
 export function selectRecentHistory(

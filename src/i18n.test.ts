@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createI18n } from 'vue-i18n'
 import { UI_LOCALES } from '../shared/locales.js'
-import { buildMessages } from './i18n/copy.js'
+import { buildMessages, copy } from './i18n/copy.js'
 
 function flatten(value: Record<string, unknown>, prefix = ''): Record<string, string> {
   return Object.fromEntries(Object.entries(value).flatMap(([key, child]) => {
@@ -12,6 +12,15 @@ function flatten(value: Record<string, unknown>, prefix = ''): Record<string, st
       : [[path, String(child ?? '')]]
   }))
 }
+
+test('no UI key is also the group that other keys sit in', () => {
+  const keys = Object.keys(copy)
+  const groups = new Set(keys.flatMap((key) => {
+    const parts = key.split('.')
+    return parts.slice(1).map((_, at) => parts.slice(0, at + 1).join('.'))
+  }))
+  assert.deepEqual(keys.filter((key) => groups.has(key)), [])
+})
 
 test('all ten interface languages contain the same non-empty UI keys', () => {
   const messages = buildMessages()
@@ -69,6 +78,9 @@ test('read-aloud settings copy is complete and interpolates the language in ever
     const unavailable = i18n.global.t('settings.speechUnavailable', { language: 'English' })
     assert.match(unavailable, /English/u, locale)
     assert.doesNotMatch(unavailable, /\{language\}/u, locale)
+    const noVoice = i18n.global.t('speech.voiceUnavailable', { language: 'English' })
+    assert.match(noVoice, /English/u, locale)
+    assert.doesNotMatch(noVoice, /\{language\}/u, locale)
   }
 
   const chinese = Object.values(flatten(messages['zh-CN'])).join('\n')

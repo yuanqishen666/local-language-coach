@@ -11,12 +11,22 @@ Start with your first sentence, or set up a conversation first. Yujian responds 
 ## What you can do
 
 - **Start talking immediately** — no lesson or task setup required.
-- **Set up a conversation** — choose a theme, add a situation or topic, then pick a partner and opening.
+- **Set up a conversation** — choose a theme, add a situation or topic, then pick a partner and opening, or let Yujian pick one for you.
+- **Find your level and let the difficulty follow you** — a placement test of about ten questions sets the starting point; replies stay within your level and get harder as you improve.
 - **Keep the thread moving naturally** — continue, change, or close a topic without being pulled back to an unwanted question.
 - **Get lightweight corrections** — the conversation comes first, with suggestions below your message.
+- **Say when you did not follow** — ask for a simpler version or a hint without leaving the conversation.
+- **Speak instead of typing** — voice input, a hands-free call mode, shadowing, and listening before reading.
 - **Look up and translate in context** — double-click, select, or long-press part of a reply.
+- **Hear pronunciation** — play partner replies, corrected expressions, words, contexts, and examples aloud.
+- **Recap a conversation** — what you managed, what to fix, and a short practice built from your own mistakes.
 - **Choose what is remembered** — nothing is saved until you approve it, and every memory can be edited, deleted, or made core.
-- **Build a wordbook and review it** — keep the expressions that matter and revisit them later.
+- **Build a wordbook and review it** — spaced review, words that come back in later conversations, short stories made from your words, and export to Anki.
+- **Bring your own material** — paste a text or a link and talk about it.
+- **See your progress** — active days, your level over time, and a weekly summary.
+- **Prepare for a real conversation** — a card of three things to try before a lesson or a language exchange, and a debrief afterwards.
+- **Know what it costs** — an estimate for each conversation and each month, with an optional monthly reminder.
+- **Share one computer** — separate learner profiles, each with its own conversations, words, and memories.
 - **Continue old conversations** — reopen any conversation and carry on where you left off.
 - **Search when current information matters** — optional and off by default.
 - **Keep your data local** — conversations, reviews, settings, memories, and API keys stay on your computer.
@@ -65,15 +75,54 @@ The AI assistant only downloads the project, prepares the runtime, starts the ap
 
 You need:
 
-- [Node.js](https://nodejs.org/) `22.13` or newer
+- [Node.js](https://nodejs.org/) `22.13` or newer (the one-line installer below brings its own copy when the computer has none)
 - npm, which is included with Node.js
-- An API key from OpenAI, Anthropic, Google Gemini, DeepSeek, or Moonshot/Kimi
+- An API key from OpenAI, Anthropic, Google Gemini, DeepSeek, or Moonshot/Kimi, or the address of an OpenAI-compatible service
 
 You do not need Docker, a separate database, a global pnpm installation, a cloud server, or a domain.
 
 > Model providers may charge for API usage. Yujian does not collect those fees.
 
 ## Download and run
+
+### One-line install
+
+macOS and Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yuanqishen666/local-language-coach/main/scripts/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/yuanqishen666/local-language-coach/main/scripts/install.ps1 | iex
+```
+
+If GitHub or the Node.js website is too slow from mainland China, use the mainland-network fallback instead.
+
+macOS and Linux:
+
+```bash
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/yuanqishen666/local-language-coach/main/scripts/install.sh | YUJIAN_GITHUB_MIRROR=https://gh-proxy.com YUJIAN_NODE_MIRROR=https://npmmirror.com/mirrors/node npm_config_registry=https://registry.npmmirror.com sh
+```
+
+Windows (PowerShell):
+
+```powershell
+$env:YUJIAN_GITHUB_MIRROR='https://gh-proxy.com'; $env:YUJIAN_NODE_MIRROR='https://npmmirror.com/mirrors/node'; $env:npm_config_registry='https://registry.npmmirror.com'; irm 'https://gh-proxy.com/https://raw.githubusercontent.com/yuanqishen666/local-language-coach/main/scripts/install.ps1' | iex
+```
+
+The installer downloads Yujian into a `yujian` folder in your home directory and starts it. When the computer has no Node.js `22.13` or newer, it downloads the official Node.js build into `.runtime/node` inside that folder and checks its SHA-256 checksum; nothing is installed system-wide. Run the same command again to update. The `data/` folder is never touched.
+
+| Variable | Effect |
+| --- | --- |
+| `YUJIAN_DIR` | Install into another folder |
+| `YUJIAN_NO_START=1` | Install without starting |
+| `YUJIAN_GITHUB_MIRROR` | Prefix public GitHub downloads with a community proxy, for example `https://gh-proxy.com` |
+| `YUJIAN_NODE_MIRROR` | Download Node.js from a mirror of `https://nodejs.org/dist`, for example `https://npmmirror.com/mirrors/node` |
+
+The mainland fallback uses `gh-proxy.com`, a third-party community proxy, and npmmirror. They are not operated by this project or GitHub and may become unavailable. Use the GitHub proxy only for this public repository; never put a private-repository URL or access token through a public proxy. If both commands fail, download the ZIP another way, unpack it into the `yujian` folder, and run the command again: it then only prepares Node.js and starts the app.
 
 ### Download the ZIP
 
@@ -114,7 +163,8 @@ You can also use the launcher for your operating system:
 
 ## First-time setup
 
-1. Choose the interface language, language you want to practise, and your current level.
+1. Choose the interface language and the language you want to practise, then take the placement test or pick your level yourself.
+
 2. Open **Settings → Models & keys**.
 3. Choose a provider and model.
 4. Enter the API key.
@@ -149,11 +199,94 @@ If something may be useful in a later conversation, Yujian asks before saving it
 
 ![Memories](./assets/readme/en/memories.png)
 
+## Level and difficulty
+
+The placement test has about ten questions and adapts as you answer: reading, listening, and a few short written answers. “Not sure” is a valid answer. You can also skip the test and pick a level from A1 to C2, and retake the test at any time.
+
+During a conversation, Yujian keeps your partner's replies within your level. Sentence length and the share of uncommon words are checked against a word-frequency list before a reply is shown. When you keep up comfortably, the level moves up a small step; when you struggle, it eases off. If a conversation starts harder than the last one, a line at the top says so.
+
+Each language you practise has its own level.
+
+## Voice
+
+- **Voice input** — press the microphone and speak your message.
+- **Call mode** — a hands-free back-and-forth: you speak, the reply is read aloud, and the microphone opens again.
+- **Shadowing** — repeat a sentence after hearing it and see which words came out differently.
+- **Listen before reading** — the reply is read aloud with its text hidden until you ask for it. You can replay it, slow it down, or go sentence by sentence.
+
+Speech is recognised by the browser by default, at no extra cost. Open Yujian in one of these browsers:
+
+| System | Browser for voice input |
+| --- | --- |
+| Windows, Linux, Android | Chrome |
+| macOS | Chrome or Safari |
+| iPhone, iPad | Safari, opened directly rather than from the Home Screen or inside another app |
+
+- Chrome sends the audio to Google's speech service, Safari to Apple's. Safari needs Siri or Dictation turned on.
+- Firefox has no speech recognition in most versions, Opera exposes it without returning results, and reports about Microsoft Edge differ.
+- When the current browser cannot do it, Yujian says so and names the browser to open instead. You do not need to reinstall or restart: copy the local address into that browser.
+- If the configured model is from OpenAI or Google Gemini, the recording can be sent to it for transcription instead: choose **Settings → Language and learning → Voice input → Configured model**. This is billed by the provider at its audio price. Other providers cannot take recordings.
+- A microphone works only on `localhost` or over `https`. It is not available when another device opens Yujian over plain `http` on the local network.
+
+This table follows public browser documentation as of November 2026; not every system and browser version has been tried.
+
+## Recap and practice
+
+After three or more exchanges, **Recap** sums up the conversation: what you managed, the corrections worth keeping, and the saved words you used. From there you can start a short practice made from your own mistakes. A recap is written only when you ask for one.
+
 ## Word lookup and review
 
-Double-click, select, or long-press unfamiliar text in your partner's message to look it up in context. A word enters your word list only when you save it.
+Double-click, select, or long-press unfamiliar text in your partner's message to look it up in context. A word enters your wordbook only when you save it.
 
-The review page schedules practice from the words you have kept. Removing a word also removes its review schedule.
+Reviews are scheduled with FSRS, and each answer button shows when the word will come back. Words that are due can also turn up in your next conversations, where using one correctly counts as a review; turn this off in Settings if you prefer cards only. Removing a word also removes its review schedule.
+
+From the wordbook you can also:
+
+- read a short story written with your saved words, then talk about it;
+- paste a text or a link, read it with lookups, and start a conversation about it;
+- export the wordbook as a file that Anki imports.
+
+The home page can suggest what to do next from your recent mistakes and due words.
+
+## Progress
+
+The **Progress** page shows your active days over the last 26 weeks, how your level has moved, and this week next to the last one: conversations, messages, words written, saved words used for the first time, and the kind of mistake you now make less often.
+
+**Five minutes before bed** starts a short, unhurried conversation about your day.
+
+## Practising with a real person
+
+Before a lesson or a language exchange, **Practice with a person** gives you a card of three things to try: the kind of mistake you make most, saved words waiting to be used, and sentences you could not say last time. The card is put together from your own records without calling a model.
+
+Afterwards, note what you used, where you got stuck, and what the other person corrected. Yujian turns that into a short debrief you can come back to.
+
+## Regional variety and tone
+
+Under **Settings → Language and learning** you can choose a regional variety for English (US, UK, Australia), Spanish (Latin America, Spain, Mexico, Argentina), French (France, Canada), German (Germany, Austria, Switzerland), Portuguese (Brazil, Portugal), and Chinese (Mainland, Taiwan), and whether your partner speaks in a neutral, casual, or formal tone. Read-aloud and voice input follow the chosen variety when the browser has a matching voice.
+
+When two wordings are both fine, or the model is not sure, a correction is marked that way and is not counted as a mistake.
+
+## Pronunciation playback
+
+When the browser provides a voice that is suitable for language practice, speaker buttons appear beside partner replies, corrected target-language expressions, lookup results, wordbook entries, and revealed review answers. Yujian uses the current browser's [Web Speech API](https://developer.mozilla.org/en-US/docs/Web/API/Window/speechSynthesis), so pronunciation does not call a model or consume model usage.
+
+Yujian prefers Natural, Neural, Premium, Enhanced, and Google voices, followed by a curated set of standard system voices. Effect voices such as `Albert` and `Bad News` are not used for language practice. If the browser cannot provide a suitable voice for the current target language, the speaker buttons stay hidden. Availability is based on the voices the browser actually provides, not only on its browser name.
+
+Pronunciation defaults to a learning-friendly `0.85×`. Adjust it from `0.60×` to `1.20×` under **Settings → Language and learning → Read-aloud settings**; the saved value applies to every pronunciation button. If the browser cannot provide a suitable voice for the current target language, the slider stays hidden and Settings explains why while recommending a better browser for that operating system.
+
+Available voices, accents, and voice quality vary by operating system and browser. Use a current stable browser for the best results:
+
+| System | Recommended browser |
+| --- | --- |
+| Windows | Microsoft Edge, which usually has the most complete access to Windows voices and natural voices |
+| macOS | Safari for system voices; try Microsoft Edge if you prefer a wider selection of natural voices |
+| Linux | Firefox with Speech Dispatcher and a voice engine for the target language installed and enabled |
+
+Microsoft Edge may offer online voices. When one of those voices is used, the text being read may be handled by the browser's online speech service; it does not pass through Yujian's model integration. Select an installed local voice in the browser or operating system when fully offline playback is important.
+
+If the launcher opens a different browser, copy the local address from the launcher window (the default is `http://127.0.0.1:4174`) and paste it into the recommended browser. You do not need to reinstall or restart Yujian.
+
+If no speaker button appears, the current browser does not expose an approved voice for that target language; install the matching system voice or try a recommended browser. If the button appears but no sound plays, check the system volume and the browser's autoplay permission. Linux distributions and browsers installed through Flatpak or Snap may not be able to access system voices until Speech Dispatcher is configured correctly. Pronunciation playback does not include speech recognition, pronunciation scoring.
 
 ## Web search
 
@@ -172,10 +305,24 @@ If you share a URL, post, account, or platform location, Yujian checks that loca
 | Google Gemini | Google AI API key |
 | DeepSeek | DeepSeek API key |
 | Moonshot / Kimi | Moonshot API key |
+| Custom OpenAI-compatible endpoint | Whatever that service asks for |
 
-Yujian connects only to official provider APIs. A model must pass multi-turn conversation, structured-response, and web-search checks before it can be saved as an available model.
+The built-in providers connect only to their official APIs. A model must pass multi-turn conversation, structured-response, and web-search checks before it can be saved as an available model.
+
+A custom endpoint is any service that speaks the OpenAI chat API: for example Qwen, Zhipu, or Doubao, or a model running on your own computer through Ollama or LM Studio. Enter its address and a model name under **Settings → Models and keys**. It goes through the same conversation and structured-response checks, has no web search, and still needs something in the key field even when the service ignores it.
 
 The selected provider handles both the conversation and any search required for that turn. There is no separate background search model.
+
+You can pick a second model for recaps, practice, and scoring the placement test, and keep a faster, cheaper one for the conversation itself.
+
+## Cost
+
+**Settings → Spending** shows an estimate of what you have spent this month, split by task and by model, next to last month. Recaps and placement results show what that conversation or test cost.
+
+- The figures are estimates worked out from token counts and public list prices in US dollars (LiteLLM's price list, taken on 2026-11-20). Cache discounts, long-context surcharges, and per-search fees are not included. Your provider's bill is the real number.
+- For a model that is not on the list, or a price that differs, enter your own price per million tokens.
+- Set a monthly reminder amount to be told when the estimate passes it. Nothing is blocked.
+- Usage is counted for the whole installation, across all learner profiles.
 
 ## Local data
 
@@ -184,19 +331,35 @@ Runtime data is stored in the project's `data/` folder:
 ```text
 data/
 ├── app.db
+├── profile-<id>.db
+├── usage.db
 ├── config.json
 ├── secrets.json
+├── setup-signing-key
 └── logs/
 ```
 
 - `app.db` stores conversations, saved words, reviews, and memories.
+- `profile-<id>.db` stores the same for each additional learner profile.
+- `usage.db` stores token counts and estimated costs.
 - `config.json` stores regular settings.
 - `secrets.json` stores API keys.
+- `setup-signing-key` verifies short-lived local model-test receipts and contains no provider API key.
 - `logs/` contains redacted startup diagnostics.
 
 Do not commit the `data/` folder to a public repository.
 
 Yujian includes no telemetry. Only the currently selected provider receives the content needed to generate the current reply.
+
+### Learner profiles
+
+Under **Settings → Data and privacy → Learner profiles** you can add up to 12 learners on one installation. Each has its own conversations, wordbook, memories, level, and language settings; models, keys, and the usage count are shared. Switching reloads the app.
+
+### Export and import
+
+- **Backup** downloads the active profile's data as one file.
+- **Memories** can be exported and imported again, on this or another installation.
+- A **conversation** can be saved as Markdown, and the **wordbook** as a file for Anki. Both are produced in the browser.
 
 ## Use it from your phone — no server required
 
@@ -226,6 +389,16 @@ npm run app -- remote stop
 ```
 
 This uses Cloudflare's [free Quick Tunnel](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/). The address changes whenever a new tunnel starts and has no uptime guarantee. Your computer, Yujian, and the tunnel process must remain running. Remote traffic passes through Cloudflare, while the API keys and local database remain on your computer. Your model provider may still charge for model usage.
+
+### On the same Wi-Fi
+
+At home, a phone or tablet on the same network can open Yujian without a tunnel:
+
+1. Turn on **Settings → Data and privacy → Access from other devices**, then stop Yujian and start it again.
+2. Open the address shown there on the other device.
+3. Enter the access code shown next to it. Making a new code signs out the devices that used the old one.
+
+This connection is plain `http` inside your network, so browsers do not allow the microphone on the other device; use the tunnel above when you need voice there. Your system firewall may ask whether to allow incoming connections.
 
 ## Troubleshooting
 
@@ -257,9 +430,9 @@ Pull or download the latest code, then run `npm start` again. The launcher check
 
 ## Current scope
 
-- Text conversations only
-- No speech recognition, pronunciation scoring, or live voice calls yet
-- A supported provider API key is required
+- Text and voice conversations; read-aloud and, by default, speech recognition come from the browser
+- No phoneme-level pronunciation scoring
+- A provider API key or an OpenAI-compatible endpoint is required
 - Designed primarily for personal, local use
 
 ## Development
@@ -288,8 +461,4 @@ When reporting a problem, include your operating system, Node.js version, provid
 
 ## License
 
-This project is source-available under the [Personal Learning Use License 1.0](./LICENSE).
-
-You may view, download, run, and modify the code only for your own personal, non-commercial learning and experimentation. Commercial or organizational use, paid services, resale, sublicensing, commercial product integration, and hosting for third parties are prohibited.
-
-This is not an OSI-approved open-source license. Any use outside these terms requires prior written permission from the copyright holder.
+This project is [non-commercial only](./LICENSE). Commercial use requires authorization from the author.

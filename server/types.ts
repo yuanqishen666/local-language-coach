@@ -1,5 +1,9 @@
+import type { ReviewedWord } from '../shared/wordbook.js'
 export type { UiLocale } from '../shared/locales.js'
 import type { UiLocale } from '../shared/locales.js'
+import type { Certainty } from '../shared/variants.js'
+import type { ErrorCategory, MemoryAbout, MemoryDurability, MemoryFrame, MemoryKind, MemoryLayer } from '../shared/memory.js'
+import type { LocalStyleCard, SceneFactPolicy, SceneInitiativeMode, SceneOrigin, SceneParticipant, SceneSafetyClass } from '../shared/conversation-scenes.js'
 
 export type ProviderKind = 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'kimi'
 export type StructuredOutputMode = 'json_schema' | 'json_object' | 'prompt_json'
@@ -7,7 +11,8 @@ export type StructuredOutputMode = 'json_schema' | 'json_object' | 'prompt_json'
 export interface ProviderCapability {
   outputMode: StructuredOutputMode
   conversationReady: true
-  lookupReady: true
+  /** False only for a custom endpoint, which has no search service of its own to pass the check with. */
+  lookupReady: boolean
   baseUrl: string
   model: string
   contractVersion: number
@@ -34,6 +39,18 @@ export interface ProviderConfig {
   /** Per-model budgets retained when the user switches models. */
   modelProfiles?: Record<string, ProviderModelProfile>
   capability?: ProviderCapability
+  /** The learner's own price for this provider in US dollars per million tokens, used instead of the list price. */
+  price?: { input: number; output: number }
+}
+
+/** One learner on this computer. Each has a database file of their own; providers and keys are shared. */
+export interface LearnerProfile {
+  id: string
+  name: string
+  createdAt: string
+  /** What this learner had set when someone else took over; absent while they are the one using the app. */
+  learning?: AppConfig['learning']
+  uiLocale?: UiLocale
 }
 
 export interface AppConfig {
@@ -46,16 +63,47 @@ export interface AppConfig {
     correctionLevel: 'light' | 'balanced' | 'intensive'
     /** Optional so configurations created before pronunciation settings remain loadable. */
     speechRate?: number
+    /** Saved words due for review come up in conversation. Absent means on. */
+    reviewInConversation?: boolean
+    /** Where speech is turned into text. Absent means the browser. */
+    voiceInput?: 'browser' | 'model'
+    /** The partner's lines are played with their text hidden until it is asked for. */
+    listenFirst?: boolean
+    /** The regional variety the partner writes and corrects in, such as en-GB. Absent or empty means the usual one. */
+    variant?: string
+    /** How formal the partner's language is. Absent means neutral. */
+    register?: 'neutral' | 'casual' | 'formal'
+    /** The difficulty one request is written at, on the 18-step scale. Set per request from the level profile; never saved. */
+    difficultyStep?: number
   }
-  llm: { defaultProvider: string; temperature: number }
+  llm: {
+    defaultProvider: string
+    temperature: number
+    /** Looks back over conversations and scores tests. Absent or empty means the provider used for talking. */
+    reviewProvider?: string
+  }
   webLookup: {
     enabled: boolean
     provider: 'selected'
     timeoutMs: number
     maxResults: number
   }
-  server: { host: string; port: number }
+  /** `lan` opens the app to other devices on the home network; it takes effect when the app is started again. */
+  server: { host: string; port: number; lan?: boolean }
   providers: ProviderConfig[]
+  /** Optional so configurations saved before it existed remain loadable. Tidying after a conversation costs one more model call, so it is off unless switched on. */
+  memory?: { consolidate?: boolean }
+  /** A reminder, not a cap: the estimated spend per calendar month, in US dollars, above which the app says so. */
+  usage?: { monthlyLimit?: number }
+  /** Learners sharing this computer. Absent means there is only one. */
+  profiles?: LearnerProfile[]
+  activeProfile?: string
+}
+
+/** The language one conversation is held in. Recorded when it starts, so changing the learning language later leaves it alone. */
+export type LearningLanguage = Pick<AppConfig['learning'], 'targetLanguage' | 'targetLanguageCode'> & {
+  /** The difficulty to write at. Without it the level chosen in settings applies. */
+  difficultyStep?: number
 }
 
 export interface CoachingResponse {
@@ -71,10 +119,17 @@ export interface CoachingResponse {
     improved: string
     explanation: string
     severity: 'meaning' | 'naturalness' | 'minor'
+    category: ErrorCategory
+    /** Absent means sure. 'either' when the learner's wording is also right somewhere or in some register; 'unsure' when the model could not tell. */
+    certainty?: Certainty
   }>
   roleReply: string
+  /** A short answer in the learner's own language to something they asked in it. Shown beside the reply, never as part of it. */
+  aside?: string
   roleReplyTranslation?: string
   roleReplyTranslations?: Record<string, string>
+  /** Saved words the learner used in the message this replies to. */
+  reviewedWords?: ReviewedWord[]
   lookup: TurnLookupDecision
   grounding?: {
     provider: ProviderKind
@@ -82,25 +137,41 @@ export interface CoachingResponse {
     searchSuggestionsHtml?: string
   }
   statePatch: ConversationStatePatch
-  memoryCandidates: Array<{
-    category: 'personal' | 'learning' | 'scene'
-    key: string
-    semanticSlot: string
-    value: string
-    confidence: number
-    sensitive: boolean
-    action: 'create' | 'update'
-    previousValue?: string
-    tier: MemoryTier
-    memoryType: MemoryType
-    topic: string
-    importance: number
-    sourceMessageId: string
-  }>
+  memoryCandidates: MemoryCandidate[]
+  /** The long-term memories this reply was written with. Only ids are stored; their wording is read when the message is shown. */
+  usedMemoryIds?: string[]
+  usedMemories?: Array<{ id: string; value: string; layer: MemoryLayer }>
+}
+
+/** Something the learner said about themselves that could be kept beyond this conversation. They decide. */
+export interface MemoryCandidate {
+  category: MemoryLayer
+  key: string
+  semanticSlot: string
+  value: string
+  /** The learner's own words it rests on. */
+  quote: string
+  confidence: number
+  sensitive: boolean
+  action: 'create' | 'update'
+  previousValue?: string
+  tier: MemoryTier
+  memoryType: MemoryType
+  topic: string
+  importance: number
+  sourceMessageId: string
+  /** Whether it was said in a scene or in a direct conversation. */
+  frame: MemoryFrame
+  durability: MemoryDurability
+  /** When it stops being used, for things that only hold for a while. */
+  validTo?: string
+  targetLanguageCode?: string
+  /** Set when the learner asked for it in so many words, so it was stored at once. */
+  savedMemoryId?: string
 }
 
 export type MemoryTier = 'core' | 'long_term'
-export type MemoryType = 'preference' | 'constraint' | 'profile' | 'learning' | 'episodic'
+export type MemoryType = MemoryKind
 export type MemoryReplyType = 'casual' | 'recommendation' | 'planning' | 'learning' | 'factual' | 'support' | 'other'
 
 export type DialogueMode = 'casual' | 'story' | 'support' | 'task' | 'opinion' | 'learning'
@@ -173,6 +244,14 @@ export interface MemoryFact {
   topic?: string
   importance?: number
   suggestedTier?: MemoryTier
+  /** Who the statement is about: the learner, the part they play in a scene, or someone else. */
+  about?: MemoryAbout
+  /** Whether it holds from now on, for a while, or only at this moment. */
+  durability?: MemoryDurability
+  /** For something that holds for a while: roughly how many days. */
+  validDays?: number
+  /** Whether the learner asked for it to be remembered. */
+  explicit?: boolean
 }
 
 export interface ConversationSetup {
@@ -189,6 +268,17 @@ export interface ConversationSetup {
   topicSeed: string
   openingLine: string
   difficulty: string
+  participants?: SceneParticipant[]
+  localStyle?: LocalStyleCard
+  factPolicy?: SceneFactPolicy
+  initiativeMode?: SceneInitiativeMode
+  openingAct?: string
+  encounterSummary?: string
+  safetyClass?: SceneSafetyClass
+}
+
+export interface ConversationScene {
+  origin: SceneOrigin
 }
 
 export type LookupAction = 'reply' | 'clarify' | 'lookup'
@@ -271,4 +361,11 @@ export interface ConversationEpisode {
   }>
   createdAt: string
   updatedAt: string
+}
+
+/** A story or pasted text a conversation is about. Both speakers have read it. */
+export interface ConversationMaterial {
+  kind: 'story' | 'import'
+  title: string
+  text: string
 }

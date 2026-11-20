@@ -1,13 +1,22 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { api } from '../api'
 import { copyText } from '../i18n/copy'
 import type { Settings } from '../types'
+import { chooseSpeechLocale } from '../speech'
+import { speechVariant } from '../../shared/variants'
 
 export const useAppStore = defineStore('app', () => {
   const settings = ref<Settings | null>(null)
   const loading = ref(true)
   const toast = ref('')
+
+  // Speech is read and recognised in the variety of the language the learner chose.
+  watch(settings, (value) => {
+    if (!value) return
+    const code = value.learning.targetLanguageCode
+    chooseSpeechLocale(code, speechVariant(code, value.learning.variant))
+  })
 
   async function load() {
     loading.value = true

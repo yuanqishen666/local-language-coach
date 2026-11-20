@@ -1,0 +1,105 @@
+/* 02 夜航 — a night flight. Tokens and the pieces every page shares, namespaced under .nf. */
+.nf{
+  --sky:#070b14;--deep:#0b1220;--panel:#111b2d;--raise:#18243a;--text:#eaeef6;--soft:rgba(234,238,246,.68);--muted:#7d889b;
+  --line:rgba(234,238,246,.1);--faint:rgba(234,238,246,.05);--amber:#ffb648;--amber-soft:rgba(255,182,72,.14);--red:#ff6b57;--green:#62d6a2;
+  --mono:'JetBrains Mono','SF Mono',ui-monospace,Menlo,Consolas,monospace;
+  --sans:'Manrope Variable','Noto Sans SC Variable',system-ui,sans-serif;
+  --out:cubic-bezier(.16,1,.3,1);--spring:cubic-bezier(.34,1.56,.64,1);
+  --bar:60px;--dock:92px;--gutter:48px;
+  position:relative;min-height:100vh;min-height:100dvh;color:var(--text);font-family:var(--sans);isolation:isolate;
+}
+.nf.focus,.nf.plain{--bar:0px;--dock:0px}
+/* the sky: two drifting layers of stars and the last light on the horizon */
+.nf::before,.nf::after{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none}
+.nf::before{background:
+  radial-gradient(1px 1px at 12% 18%,#fff 50%,transparent 51%),radial-gradient(1px 1px at 27% 62%,rgba(255,255,255,.7) 50%,transparent 51%),
+  radial-gradient(1.4px 1.4px at 41% 9%,#fff 50%,transparent 51%),radial-gradient(1px 1px at 58% 34%,rgba(255,255,255,.6) 50%,transparent 51%),
+  radial-gradient(1px 1px at 69% 77%,rgba(255,255,255,.7) 50%,transparent 51%),radial-gradient(1.4px 1.4px at 83% 22%,#fff 50%,transparent 51%),
+  radial-gradient(1px 1px at 93% 55%,rgba(255,255,255,.6) 50%,transparent 51%),radial-gradient(1px 1px at 6% 84%,rgba(255,255,255,.5) 50%,transparent 51%),
+  radial-gradient(1px 1px at 49% 91%,rgba(255,255,255,.5) 50%,transparent 51%),radial-gradient(1px 1px at 76% 6%,rgba(255,255,255,.6) 50%,transparent 51%);
+  opacity:.5;animation:nf-twinkle 7s ease-in-out infinite alternate}
+.nf::after{background:radial-gradient(120% 46% at 50% 118%,rgba(255,140,72,.2),rgba(120,80,200,.07) 46%,transparent 70%)}
+@keyframes nf-twinkle{to{opacity:.85}}
+.nf ::selection{background:rgba(255,182,72,.32)}
+.nf button,.nf input,.nf textarea,.nf select{color:inherit;font-family:inherit}
+.nf button{cursor:pointer}
+.nf button:disabled{cursor:default}
+.nf a{color:inherit;text-decoration:none}
+.nf :is(button,a,input,textarea,select,[tabindex]):focus-visible{outline:2px solid var(--amber);outline-offset:3px}
+.nf h1,.nf h2,.nf h3,.nf h4,.nf p,.nf blockquote,.nf dl,.nf dd{margin:0}
+
+.nf-page{max-width:1160px;margin:0 auto;padding:44px var(--gutter) calc(var(--dock) + 56px)}
+.nf-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:34px}
+.nf-title{font-size:clamp(38px,4.6vw,64px);font-weight:300;line-height:1.02;letter-spacing:-.045em}
+.nf-label{color:var(--muted);font:500 11px/1.2 var(--mono);letter-spacing:.14em;text-transform:uppercase}
+.nf-mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* a signal lamp */
+.nf-lamp{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}
+.nf-lamp.on{background:var(--amber);box-shadow:0 0 0 3px var(--amber-soft),0 0 12px var(--amber)}
+.nf-lamp.go{background:var(--green);box-shadow:0 0 0 3px rgba(98,214,162,.14),0 0 12px var(--green)}
+.nf-lamp.blink{animation:nf-blink 1.1s steps(2,jump-none) infinite}
+@keyframes nf-blink{to{opacity:.2}}
+
+.nf-glass{border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.02));box-shadow:inset 0 0 0 1px var(--line),inset 0 1px 0 rgba(255,255,255,.06)}
+
+/* buttons */
+.nf-btn{position:relative;height:44px;padding:0 22px;display:inline-flex;align-items:center;justify-content:center;gap:10px;border:0;border-radius:999px;background:var(--amber);color:#1b1204!important;font-size:13.5px;font-weight:700;letter-spacing:.01em;white-space:nowrap;transition:transform .4s var(--spring),box-shadow .3s,opacity .3s,background .3s}
+.nf-btn:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 10px 30px -8px rgba(255,182,72,.7)}
+.nf-btn:active:not(:disabled){transform:scale(.96)}
+.nf-btn:disabled{opacity:.3}
+.nf-btn svg{transition:transform .45s var(--out)}
+.nf-btn:hover:not(:disabled) svg{transform:translateX(3px)}
+.nf-btn.ghost{background:none;color:var(--text)!important;box-shadow:inset 0 0 0 1px rgba(234,238,246,.24)}
+.nf-btn.ghost:hover:not(:disabled){box-shadow:inset 0 0 0 1px var(--amber);color:var(--amber)!important}
+.nf-btn.danger{background:var(--red);color:#230500!important}
+.nf-btn.danger:hover:not(:disabled){box-shadow:0 10px 30px -8px rgba(255,107,87,.7)}
+.nf-btn.small{height:34px;padding:0 15px;font-size:12px}
+.nf-link{position:relative;padding:3px 0;border:0;background:none;color:var(--soft);font-size:12.5px;transition:color .25s}
+.nf-link:hover:not(:disabled){color:var(--amber)}
+.nf-link.on{color:var(--amber)}
+.nf-link.red:hover:not(:disabled){color:var(--red)}
+.nf-link:disabled{opacity:.35}
+
+/* fields */
+.nf-field{display:grid;gap:9px}
+.nf-field>label{color:var(--muted);font:500 11px/1.2 var(--mono);letter-spacing:.14em;text-transform:uppercase}
+.nf-input{width:100%;min-height:46px;padding:11px 16px;border:0;border-radius:14px;background:rgba(255,255,255,.045);box-shadow:inset 0 0 0 1px var(--line);font-size:15.5px;line-height:1.5;outline:0;transition:box-shadow .3s,background .3s}
+.nf-input:hover{box-shadow:inset 0 0 0 1px rgba(234,238,246,.24)}
+.nf-input:focus{background:rgba(255,182,72,.05);box-shadow:inset 0 0 0 1px var(--amber),0 0 0 4px var(--amber-soft)}
+.nf-input:focus-visible{outline:0!important}
+.nf-input::placeholder{color:rgba(234,238,246,.28)}
+textarea.nf-input{resize:none;field-sizing:content;min-height:46px}
+
+/* pill choices */
+.nf-chips{display:flex;flex-wrap:wrap;gap:8px}
+.nf-chips button{height:36px;padding:0 15px;border:0;border-radius:999px;background:none;box-shadow:inset 0 0 0 1px var(--line);color:var(--soft);font-size:13px;transition:color .25s,box-shadow .25s,background .25s,transform .4s var(--spring)}
+.nf-chips button:hover{color:var(--text);box-shadow:inset 0 0 0 1px rgba(234,238,246,.3)}
+.nf-chips button:active{transform:scale(.95)}
+.nf-chips button.on,.nf-chips button[aria-pressed='true']{background:var(--amber-soft);box-shadow:inset 0 0 0 1px var(--amber);color:var(--amber)}
+
+.nf-error{color:var(--red);font-size:13px;line-height:1.6}
+.nf-empty{padding:90px 0;color:var(--muted);font-size:20px;font-weight:300;text-align:center}
+
+.nf-veil{position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:24px;background:rgba(3,6,12,.66);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);animation:nf-fade .25s both}
+.nf-dialog{width:min(440px,100%);padding:30px;border-radius:26px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line),0 40px 100px rgba(0,0,0,.6);animation:nf-rise .5s var(--out) both}
+.nf-dialog h2{font-size:24px;font-weight:500;letter-spacing:-.02em;line-height:1.25}
+.nf-dialog p{margin-top:12px;color:var(--soft);font-size:13.5px;line-height:1.75}
+.nf-dialog footer{margin-top:26px;display:flex;justify-content:flex-end;gap:10px}
+@keyframes nf-fade{from{opacity:0}}
+@keyframes nf-rise{from{opacity:0;transform:translateY(22px) scale(.97)}}
+
+.nf .lab-words.live .lab-word{border-radius:5px;transition:background .2s,color .2s}
+.nf .lab-words.live .lab-word:hover{background:var(--amber-soft);color:var(--amber)}
+
+.nf-page-enter-active{transition:opacity .4s,transform .55s var(--out)}
+.nf-page-leave-active{transition:opacity .16s}
+.nf-page-enter-from{opacity:0;transform:translateY(14px)}
+.nf-page-leave-to{opacity:0}
+
+@media (max-width:760px){
+  .nf{--bar:54px;--dock:84px;--gutter:18px}
+  .nf-page{padding-top:26px}
+  .nf-head{margin-bottom:24px}
+}
+@media (prefers-reduced-motion:reduce){.nf::before,.nf-lamp.blink{animation:none}}

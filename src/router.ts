@@ -1,26 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import HomePage from './pages/HomePage.vue'
-import OnboardingPage from './pages/OnboardingPage.vue'
-import SceneBuilderPage from './pages/SceneBuilderPage.vue'
-import ConversationPage from './pages/ConversationPage.vue'
-import HistoryPage from './pages/HistoryPage.vue'
-import WordbookPage from './pages/WordbookPage.vue'
-import ReviewPage from './pages/ReviewPage.vue'
-import MemoriesPage from './pages/MemoriesPage.vue'
-import SettingsPage from './pages/SettingsPage.vue'
+import { appRoutes, installLabGuard, labRoutes } from './lab/routes'
 
+// The templates in ./pages are no longer routed, but their <script setup> blocks are still the source
+// of the page logic: src/lab/logic/generate.mjs wraps them for the new pages. Change behaviour there.
 export const router = createRouter({
   history: createWebHistory(),
-  routes: [
-    { path: '/', component: HomePage },
-    { path: '/onboarding', component: OnboardingPage, meta: { bare: true } },
-    { path: '/start', component: SceneBuilderPage },
-    { path: '/scene', redirect: '/start' },
-    { path: '/conversation/:id', component: ConversationPage, meta: { focus: true } },
-    { path: '/history', component: HistoryPage },
-    { path: '/words', component: WordbookPage },
-    { path: '/review', component: ReviewPage },
-    { path: '/memories', component: MemoriesPage },
-    { path: '/settings', component: SettingsPage },
-  ],
+  routes: [...appRoutes, ...labRoutes],
 })
+
+installLabGuard(router)

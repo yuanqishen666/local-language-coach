@@ -179,3 +179,26 @@ test('an already certified provider can update token budgets without testing aga
   assert.equal(provider.maxOutputTokens, 2_400)
   assert.equal((await getSecrets())['providers.deepseek.apiKey'], 'key-deepseek')
 })
+
+test('a custom endpoint is tested with a model name its own list does not hold', async () => {
+  const added = await app.inject({ method: 'PUT', url: '/api/providers/custom/endpoint', payload: { name: 'Own', baseUrl: 'https://llm.example.test/v1' } })
+  assert.equal(added.statusCode, 200)
+  const tested = await app.inject({ method: 'POST', url: '/api/providers/custom/test', payload: { apiKey: 'key-own', model: 'ep-20261120-own' } })
+  assert.equal(tested.statusCode, 200, tested.body)
+  const receipt = tested.json().setupReceipt
+  assert.equal(typeof receipt, 'string')
+  const saved = await app.inject({
+    method: 'PUT',
+    url: '/api/providers/custom',
+    payload: { apiKey: 'key-own', model: 'ep-20261120-own', enabled: true, contextWindowTokens: 32_768, maxOutputTokens: 1_200, modelProfiles: {}, setupReceipt: receipt },
+  })
+  assert.equal(saved.statusCode, 200, saved.body)
+  const provider = saved.json().providers.find((item: { id: string }) => item.id === 'custom')
+  assert.equal(provider.model, 'ep-20261120-own')
+  assert.equal(provider.capabilityReady, true)
+  assert.equal(provider.capability.lookupReady, false)
+
+  // Every other provider still has to name a model its key can use.
+  const unlisted = await app.inject({ method: 'POST', url: '/api/providers/openai/test', payload: { apiKey: 'key-openai', model: 'not-on-the-list' } })
+  assert.equal(unlisted.json().code, 'MODEL_NOT_DISCOVERED')
+})

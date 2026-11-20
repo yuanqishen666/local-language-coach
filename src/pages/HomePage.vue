@@ -8,6 +8,9 @@ import AppIcon from '../components/AppIcon.vue'
 import { guideToModelSettings, needsModelConfiguration } from '../model-access'
 import { displayTargetLanguage } from '../../shared/locales'
 import { conversationDisplayTitle, type ConversationListItem } from '../conversation-list'
+import { levelOverview, levelPrompted, stepName } from '../level'
+import { modelErrorKey } from '../provider-error-copy'
+import type { LearningPath, PathItem } from '../../shared/wordbook'
 
 const store = useAppStore()
 const router = useRouter()
@@ -15,6 +18,13 @@ const { t, locale } = useI18n()
 const history = ref<ConversationListItem[]>([])
 const creating = ref(false)
 const startError = ref('')
+// A language that has no level yet is pointed to the test, until the learner has opened it once.
+const levelLanguageCode = computed(() => store.settings?.learning.targetLanguageCode || 'en')
+const levelLanguage = computed(() => displayTargetLanguage(levelLanguageCode.value, locale.value))
+const askLevel = computed(() => {
+  const overview = levelOverview(levelLanguageCode.value)
+  return Boolean(overview && !overview.profile && !levelPrompted(levelLanguageCode.value))
+})
 const directTitleParts = computed(() => {
   const title = t('home.openTitle')
   return String(locale.value).startsWith('zh') ? [title.slice(0, 2), title.slice(2)] : [title]
@@ -47,6 +57,71 @@ async function startConversation() {
     creating.value = false
   }
 }
+
+// What to talk about next: asked for with a click, kept for a day, and never started on its own.
+const path = ref<LearningPath | null>(null)
+const pathWriting = ref(false)
+const pathError = ref('')
+const pathStarting = ref('')
+let pathVersion = 0
+async function loadPath() {
+  const version = ++pathVersion
+  const requestedLocale = String(locale.value)
+  try {
+    const found = await api.get<{ path: LearningPath | null }>(`/path?interfaceLocale=${encodeURIComponent(requestedLocale)}`)
+    if (version === pathVersion && requestedLocale === String(locale.value)) path.value = found.path
+  } catch {
+    if (version === pathVersion) path.value = null
+  }
+}
+onMounted(loadPath)
+watch(locale, loadPath)
+
+async function suggestPath() {
+  if (pathWriting.value) return
+  pathError.value = ''
+  if (!store.settings?.modelReady) {
+    await guideToModelSettings(router, '/')
+    return
+  }
+  const version = ++pathVersion
+  pathWriting.value = true
+  try {
+    const result = await api.post<{ path: LearningPath }>('/path', { interfaceLocale: String(locale.value) })
+    if (version === pathVersion) path.value = result.path
+  } catch (error) {
+    if (needsModelConfiguration(error)) await guideToModelSettings(router, '/')
+    else pathError.value = t(modelErrorKey(error) || 'path.failed')
+  } finally {
+    pathWriting.value = false
+  }
+}
+
+async function startPathItem(item: PathItem) {
+  if (pathStarting.value) return
+  if (item.conversationId) {
+    await router.push(`/conversation/${item.conversationId}`)
+    return
+  }
+  pathStarting.value = item.id
+  pathError.value = ''
+  try {
+    const created = await api.post<{ id: string }>(`/path/${encodeURIComponent(item.id)}/start`, { interfaceLocale: String(locale.value) })
+    await router.push(`/conversation/${created.id}`)
+  } catch (error) {
+    if (needsModelConfiguration(error)) await guideToModelSettings(router, '/')
+    else pathError.value = t('home.startError')
+  } finally {
+    pathStarting.value = ''
+  }
+}
+function pathLevel(item: PathItem) {
+  return stepName(item.step)
+}
+function mistakeLabel(category: string) {
+  return t(`learning.error.${category}`)
+}
+
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(String(locale.value), { dateStyle: 'medium' }).format(new Date(value))

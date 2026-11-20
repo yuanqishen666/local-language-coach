@@ -1,0 +1,11 @@
+/* Page-level backdrop for each preview theme, and the classic chrome that must stay out of the way. */
+html[data-lab] #app > .toast { display: none; }
+html[data-lab] .app-loading { color: transparent; }
+html[data-lab] .app-loading .brand-mark { display: none; }
+html[data-lab='paper'], html[data-lab='paper'] body { background: #f3efe6; }
+html[data-lab='night'], html[data-lab='night'] body { background: #070b14; }
+html[data-lab='blocks'], html[data-lab='blocks'] body { background: #ebe7de; }
+html[data-lab='mono'], html[data-lab='mono'] body { background: #f1efea; }
+html[data-lab='gallery'], html[data-lab='gallery'] body { background: #ededeb; }
+html[data-lab='desk'], html[data-lab='desk'] body { background: #ffffff; }
+html[data-lab] .lab-words.live .lab-word { cursor: pointer; }

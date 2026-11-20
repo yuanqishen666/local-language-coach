@@ -1,0 +1,102 @@
+/* 01 纸本 — tokens and the few pieces every page shares. Everything is namespaced under .pp. */
+.pp{
+  --paper:#f3efe6;--sheet:#f8f5ee;--ink:#191612;--soft:rgba(25,22,18,.66);--muted:#8b8477;--red:#c5371e;--line:rgba(25,22,18,.15);--faint:rgba(25,22,18,.06);
+  --serif:'Iowan Old Style','Palatino Linotype','Book Antiqua','Songti SC',STSong,'Noto Serif CJK SC','Source Han Serif SC','Hiragino Mincho ProN','Yu Mincho',Georgia,serif;
+  --sans:'Manrope Variable','Noto Sans SC Variable',system-ui,sans-serif;
+  --out:cubic-bezier(.16,1,.3,1);
+  --mast:72px;--tabs:0px;--gutter:56px;
+  position:relative;min-height:100vh;min-height:100dvh;color:var(--ink);font-family:var(--sans);isolation:isolate;
+}
+.pp::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.55;mix-blend-mode:multiply;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='260' height='260'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .32 0 0 0 0 .27 0 0 0 0 .2 0 0 0 .42 -.14'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")}
+.pp.focus,.pp.plain{--mast:0px}
+.pp ::selection{background:rgba(197,55,30,.2)}
+.pp button,.pp input,.pp textarea,.pp select{color:inherit}
+.pp :is(button,a,input,textarea,select,[tabindex]):focus-visible{outline:2px solid var(--red);outline-offset:3px}
+.pp h1,.pp h2,.pp h3,.pp p,.pp blockquote,.pp dl,.pp dd{margin:0}
+
+/* page frame */
+.pp-page{max-width:1180px;margin:0 auto;padding:54px var(--gutter) 96px}
+.pp-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding-bottom:26px;border-bottom:1px solid var(--line)}
+.pp-title{font:500 clamp(40px,4.4vw,60px)/1.02 var(--serif);letter-spacing:-.035em}
+.pp-label{color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
+.pp-num{font-variant-numeric:tabular-nums;font-feature-settings:'tnum'}
+
+/* text button with an ink stroke that draws itself */
+.pp-link{position:relative;padding:4px 0;border:0;background:none;color:var(--soft);font-size:13px;letter-spacing:.03em;transition:color .25s}
+.pp-link::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:currentColor;transform:scaleX(0);transform-origin:right;transition:transform .45s var(--out)}
+.pp-link:hover:not(:disabled),.pp-link.on{color:var(--ink)}
+.pp-link:hover:not(:disabled)::after,.pp-link.on::after{transform:scaleX(1);transform-origin:left}
+.pp-link.red{color:var(--red)}
+.pp-link:disabled{opacity:.4}
+
+/* solid button: ink block, vermilion rises from the bottom edge */
+.pp-btn{position:relative;height:44px;padding:0 22px;display:inline-flex;align-items:center;justify-content:center;gap:10px;overflow:hidden;border:0;border-radius:3px;background:var(--ink);color:var(--paper)!important;font-size:13px;font-weight:600;letter-spacing:.06em;isolation:isolate;transition:opacity .25s}
+.pp-btn::before{content:'';position:absolute;inset:0;z-index:-1;background:var(--red);transform:scaleY(0);transform-origin:bottom;transition:transform .5s var(--out)}
+.pp-btn:hover:not(:disabled)::before{transform:scaleY(1)}
+.pp-btn:active:not(:disabled){transform:translateY(1px)}
+.pp-btn:disabled{opacity:.28}
+.pp-btn svg{transition:transform .45s var(--out)}
+.pp-btn:hover:not(:disabled) svg{transform:translateX(4px)}
+.pp-btn.line{background:none;color:var(--ink)!important;box-shadow:inset 0 0 0 1px var(--ink)}
+.pp-btn.line::before{background:var(--ink)}
+.pp-btn.line:hover:not(:disabled){color:var(--paper)!important}
+.pp-btn.danger{background:var(--red)}
+.pp-btn.danger::before{background:var(--ink)}
+.pp-btn.small{height:34px;padding:0 14px;font-size:12px}
+
+/* fields are ruled lines, like a form printed on the page */
+.pp-field{display:grid;gap:8px}
+.pp-field>label,.pp-field>.pp-label{color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
+.pp-input{width:100%;min-height:40px;padding:8px 0;border:0;border-bottom:1px solid var(--line);border-radius:0;background:none;font:400 17px/1.5 var(--serif);outline:0;transition:border-color .3s,box-shadow .3s}
+.pp-input:hover{border-bottom-color:rgba(25,22,18,.4)}
+.pp-input:focus{border-bottom-color:var(--ink);box-shadow:0 1px 0 var(--ink)}
+.pp-input:focus-visible{outline:0!important}
+.pp-input::placeholder{color:rgba(25,22,18,.3)}
+textarea.pp-input{resize:none;field-sizing:content;min-height:72px}
+select.pp-input{appearance:none;-webkit-appearance:none;padding-right:26px;background:no-repeat right 4px center/10px url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='m1 1 4 4 4-4' fill='none' stroke='%23191612' stroke-width='1.3'/></svg>");cursor:pointer}
+select.pp-input:disabled{opacity:.4;cursor:not-allowed}
+
+/* choices set as running text; the chosen one is underlined in red */
+.pp-seg{display:flex;flex-wrap:wrap;gap:6px 22px}
+.pp-seg button{position:relative;padding:6px 0;border:0;background:none;color:var(--muted);font:400 17px/1.3 var(--serif);transition:color .25s}
+.pp-seg button::after{content:'';position:absolute;left:0;right:0;bottom:1px;height:2px;background:var(--red);transform:scaleX(0);transform-origin:left;transition:transform .45s var(--out)}
+.pp-seg button:hover{color:var(--ink)}
+.pp-seg button.on,.pp-seg button[aria-pressed='true']{color:var(--ink)}
+.pp-seg button.on::after,.pp-seg button[aria-pressed='true']::after{transform:scaleX(1)}
+
+/* a square seal */
+.pp-seal{display:inline-grid;place-items:center;width:1.9em;height:1.9em;border-radius:.24em;background:var(--red);color:var(--paper);font:500 1em/1 var(--serif);font-style:normal;box-shadow:inset 0 0 0 .1em var(--red),inset 0 0 0 .16em rgba(243,239,230,.65)}
+
+.pp-error{color:var(--red);font-size:13px;line-height:1.6}
+.pp-empty{padding:90px 0;color:var(--muted);font:400 22px/1.5 var(--serif);text-align:center}
+
+/* a slip of paper laid over the page */
+.pp-veil{position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:24px;background:rgba(25,22,18,.32);animation:pp-fade .25s both}
+.pp-slip{width:min(440px,100%);padding:34px 34px 28px;background:var(--sheet);box-shadow:0 30px 80px rgba(25,22,18,.28),0 0 0 1px var(--line);animation:pp-slip .5s var(--out) both}
+.pp-slip h2{font:500 26px/1.25 var(--serif);letter-spacing:-.02em}
+.pp-slip p{margin-top:14px;color:var(--soft);font-size:13px;line-height:1.75}
+.pp-slip footer{margin-top:28px;display:flex;justify-content:flex-end;gap:10px}
+@keyframes pp-fade{from{opacity:0}}
+@keyframes pp-slip{from{opacity:0;transform:translateY(18px) rotate(-1.2deg)}}
+
+/* words in a partner's line take a red underline when the pointer rests on them */
+.pp .lab-words.live .lab-word{border-radius:2px;transition:background .2s,box-shadow .2s}
+.pp .lab-words.live .lab-word:hover{background:rgba(197,55,30,.1);box-shadow:0 2px 0 var(--red)}
+
+/* loose page turn between views */
+.pp-page-enter-active{transition:opacity .45s ease,transform .6s var(--out)}
+.pp-page-leave-active{transition:opacity .16s ease}
+.pp-page-enter-from{opacity:0;transform:translateY(12px)}
+.pp-page-leave-to{opacity:0}
+
+@media (max-width:1000px){.pp{--gutter:36px}}
+@media (max-width:760px){
+  .pp{--mast:60px;--tabs:64px;--gutter:20px}
+  .pp.focus,.pp.plain{--mast:0px;--tabs:0px}
+  .pp-page{padding:30px var(--gutter) calc(var(--tabs) + 48px)}
+  .pp-head{padding-bottom:18px}
+}
+@media (prefers-reduced-motion:reduce){
+  .pp-page-enter-active,.pp-page-leave-active{transition:none}
+  .pp-slip,.pp-veil{animation:none}
+}

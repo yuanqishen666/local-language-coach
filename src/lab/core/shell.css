@@ -1,0 +1,31 @@
+/* Pieces every shell of the shared themes uses: page change, toast, phone tab bar. */
+.c-view-enter-active{transition:opacity .22s,transform .45s var(--c-ease)}
+.c-view-leave-active{transition:opacity .1s}
+.c-view-enter-from{opacity:0;transform:translateY(8px)}
+.c-view-leave-to{opacity:0}
+
+.c-toast{position:fixed;left:50%;bottom:28px;z-index:140;max-width:calc(100vw - 32px);padding:11px 18px;border-radius:var(--c-r-btn);background:var(--c-ink);color:var(--c-bg);font-size:13px;font-weight:600;box-shadow:var(--c-pop);transform:translateX(-50%)}
+.c-toast-enter-active{transition:transform .5s var(--c-spring),opacity .2s}
+.c-toast-leave-active{transition:transform .25s ease-in,opacity .25s}
+.c-toast-enter-from,.c-toast-leave-to{opacity:0;transform:translate(-50%,20px) scale(.94)}
+
+.c-tabs,.c-more,.c-tabs-veil{display:none}
+@media (max-width:760px){
+  .c-tabs{position:fixed;left:0;right:0;bottom:0;z-index:92;display:flex;padding:6px 6px calc(6px + env(safe-area-inset-bottom));border-top:1px solid var(--c-line);background:var(--c-tabs-bg,var(--c-surface))}
+  .c-tabs>*{position:relative;flex:1 1 auto;min-width:0;height:50px;padding:0 3px;display:grid;justify-items:center;align-content:center;gap:3px;border-radius:var(--c-r-xs,8px);color:var(--c-mute);font-size:10.5px;font-weight:650;transition:color .15s,transform .4s var(--c-spring)}
+  .c-tabs>*:active{transform:scale(.92)}
+  .c-tabs span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .c-tabs .on{color:var(--c-ink)}
+  .c-tabs em{position:absolute;left:calc(50% + 6px);top:3px;min-width:17px;height:17px;padding:0 5px;display:grid;place-items:center;border-radius:99px;background:var(--c-accent);color:var(--c-on-accent);font-size:10px;font-weight:700;font-variant-numeric:tabular-nums}
+  .c-tabs-veil{display:block;z-index:90}
+  .c-more{position:fixed;right:8px;bottom:calc(70px + env(safe-area-inset-bottom));z-index:91;min-width:190px;display:grid;gap:2px;padding:6px;border:var(--c-card-border,1px solid var(--c-line));border-radius:var(--c-r-s);background:var(--c-surface);box-shadow:var(--c-pop)}
+  .c-more a{height:46px;padding:0 12px;display:flex;align-items:center;gap:12px;border-radius:var(--c-r-xs,8px);font-size:14.5px;font-weight:600}
+  .c-more a.on{background:var(--c-sunk)}
+  .c-more-enter-active{transition:transform .4s var(--c-spring),opacity .15s}
+  .c-more-leave-active{transition:opacity .12s}
+  .c-more-enter-from{opacity:0;transform:translateY(10px) scale(.96)}
+  .c-more-leave-to{opacity:0}
+  .c-toast{bottom:calc(84px + env(safe-area-inset-bottom))}
+  /* the strip the preview switch sits in */
+  .th{--c-top:40px;padding-top:var(--c-top)}
+}
