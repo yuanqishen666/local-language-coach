@@ -383,14 +383,6 @@ function createTables() {
       items_json TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS live_sessions (
-      id TEXT PRIMARY KEY,
-      language_code TEXT NOT NULL,
-      card_json TEXT NOT NULL,
-      outcome_json TEXT,
-      created_at TEXT NOT NULL,
-      finished_at TEXT
-    );
   `)
 }
 

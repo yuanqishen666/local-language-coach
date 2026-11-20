@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import './daily.css'
 import './pages.css'
-import { RouterLink } from 'vue-router'
 import Icon from '../kit/Icon.vue'
 import { vTip } from '../core/tip'
 import { useProgressPage } from '../logic/ProgressPage'
@@ -25,14 +24,6 @@ const {
           <span v-if="starting" class="y-dots" aria-hidden="true"><i></i><i></i><i></i></span>
           <Icon v-else name="arrow" :size="14" :weight="2" />
         </button>
-      </li>
-      <li>
-        <RouterLink to="/progress/live" class="y-row">
-          <Icon name="people" :size="15" :weight="2" />
-          <b>{{ t('live.title') }}</b>
-          <span>{{ t('live.note') }}</span>
-          <Icon name="arrow" :size="14" :weight="2" />
-        </RouterLink>
       </li>
     </ul>
     <p v-if="startError" class="y-error" role="alert">{{ startError }}</p>

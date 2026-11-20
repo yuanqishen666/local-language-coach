@@ -24,7 +24,6 @@ Start with your first sentence, or set up a conversation first. Yujian responds 
 - **Build a wordbook and review it** — spaced review, words that come back in later conversations, short stories made from your words, and export to Anki.
 - **Bring your own material** — paste a text or a link and talk about it.
 - **See your progress** — active days, your level over time, and a weekly summary.
-- **Prepare for a real conversation** — a card of three things to try before a lesson or a language exchange, and a debrief afterwards.
 - **Know what it costs** — an estimate for each conversation and each month, with an optional monthly reminder.
 - **Share one computer** — separate learner profiles, each with its own conversations, words, and memories.
 - **Continue old conversations** — reopen any conversation and carry on where you left off.
@@ -253,12 +252,6 @@ The home page can suggest what to do next from your recent mistakes and due word
 The **Progress** page shows your active days over the last 26 weeks, how your level has moved, and this week next to the last one: conversations, messages, words written, saved words used for the first time, and the kind of mistake you now make less often.
 
 **Five minutes before bed** starts a short, unhurried conversation about your day.
-
-## Practising with a real person
-
-Before a lesson or a language exchange, **Practice with a person** gives you a card of three things to try: the kind of mistake you make most, saved words waiting to be used, and sentences you could not say last time. The card is put together from your own records without calling a model.
-
-Afterwards, note what you used, where you got stuck, and what the other person corrected. Yujian turns that into a short debrief you can come back to.
 
 ## Regional variety and tone
 

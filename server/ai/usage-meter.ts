@@ -64,7 +64,7 @@ export function usageScopeFor(route: string, params: Record<string, unknown> = {
   if (route.startsWith('/api/placement')) return { task: 'placement', ...(id ? { sessionId: id } : {}) }
   if (route.startsWith('/api/speech')) return { task: 'speech' }
   if (route.startsWith('/api/providers') || route.startsWith('/api/settings')) return { task: 'setup' }
-  if (route.startsWith('/api/practice') || route.startsWith('/api/live')) return { task: 'review' }
+  if (route.startsWith('/api/practice')) return { task: 'review' }
   if (route.startsWith('/api/conversations/:id')) {
     const rest = route.slice('/api/conversations/:id'.length)
     const task: UsageTask = /^\/(recap|practice|assess|consolidate)/u.test(rest) ? 'review'

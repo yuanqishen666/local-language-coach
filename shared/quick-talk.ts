@@ -43,6 +43,3 @@ export function bedtimeOpening(languageCode: string, variant = '', register = 'n
 
 /** What the partner is told about this kind of conversation. */
 export const BEDTIME_RULE = 'This is a few quiet minutes of talk at the end of the day, before sleep. Keep every reply to one or two short sentences and stay with how the day went and what tomorrow holds. Once the learner has written about ' + BEDTIME_TURNS + ' messages, wind down: answer what they said, wish them a good night, and ask nothing further.'
-
-/** How many stuck moments, and how many corrected sentences, one talk with a real person can be written up with. */
-export const LIVE_NOTES_MAX = 6

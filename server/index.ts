@@ -35,7 +35,6 @@ import { registerSpeechRoutes } from './speech-routes.js'
 import { registerUsageMeter, registerUsageRoutes } from './usage-routes.js'
 import { openActiveProfile, registerProfileRoutes } from './profiles.js'
 import { registerProgressRoutes } from './progress-routes.js'
-import { registerLiveRoutes } from './live-routes.js'
 import { admitFromNetwork, registerLanRoutes, setLanListening } from './lan.js'
 import { tagUsage } from './ai/usage-meter.js'
 import { countsAsError, normalizeRegister, normalizeVariant } from '../shared/variants.js'
@@ -1159,7 +1158,6 @@ registerSpeechRoutes(app)
 registerUsageRoutes(app)
 registerProfileRoutes(app, { busy: () => inFlightTurns.size > 0 })
 registerProgressRoutes(app)
-registerLiveRoutes(app)
 registerLanRoutes(app, { port: () => Number(process.env.PORT || config.server.port) })
 registerWordbookRoutes(app, {
   createConversation: (setup, interfaceLocale, learning, title, start) => createConversationRecord(setup, interfaceLocale, learning, title, undefined, start),
@@ -1173,7 +1171,6 @@ app.get('/api/export', async () => ({
   proficiencyProfiles: rows('SELECT * FROM proficiency_profiles'), proficiencyHistory: rows('SELECT * FROM proficiency_history'), placementSessions: rows('SELECT * FROM placement_sessions'), turnSignals: rows('SELECT * FROM turn_signals'), conversationAssessments: rows('SELECT * FROM conversation_assessments'),
   conversationRecaps: rows('SELECT * FROM conversation_recaps'), practiceSets: rows('SELECT * FROM practice_sets'),
   wordReviews: rows('SELECT * FROM word_reviews'), conversationWords: rows('SELECT * FROM conversation_words'), wordStories: rows('SELECT * FROM word_stories'), contentImports: rows('SELECT * FROM content_imports'), learningPaths: rows('SELECT * FROM learning_paths'),
-  liveSessions: rows('SELECT * FROM live_sessions'),
 }))
 
 

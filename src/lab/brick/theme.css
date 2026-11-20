@@ -444,7 +444,3 @@ html[data-lab='brick'] .lab-words.live .lab-word:hover { background: var(--y-tin
 .bk .y-shadow { --y-piece: var(--y-bg); --y-piece-hover: var(--y-bg); border-radius: 16px; }
 .bk :is(.y-uses-list, .y-card) .y-shadow { --y-piece: var(--y-sunk); --y-piece-hover: var(--y-sunk); }
 .bk .y-shadow .y-shadow-result.ok, .bk .y-shadow .y-shadow-heard small { font-weight: 800; }
-
-/* Practice with a person: the mark on a card line sits on a sunk row. */
-.bk .y-used-go, .bk .y-used-go:hover:not(:disabled) { background: var(--y-bg); }
-.bk .y-used-go[aria-pressed='true'], .bk .y-used-go[aria-pressed='true']:hover:not(:disabled) { background: var(--y-accent); color: #fff; }

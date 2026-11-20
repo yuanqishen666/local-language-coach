@@ -1,0 +1,43 @@
+---
+description: 八戒工作记忆（共享笔记镜像，自动生成）
+alwaysApply: true
+---
+
+<!-- bajie-memory: generated from the shared agent notes; edits here are overwritten -->
+
+# 八戒工作记忆（共享笔记）
+
+来源 `/Users/yqs/.cursor/projects/Users-yqs-projects-local-language-coach/agent-notes/shared`（3 篇）。本文件由八戒插件按共享笔记自动生成，手改会在下次写笔记时被覆盖；改记忆请用 `workspace_notes`（op: write / append / delete）或直接编辑来源目录里的 markdown。读某篇全文用 `workspace_notes({ op: "read", name: "<文件名>" })`。
+
+## full-plan-build.md
+
+# 按完整方案改造（2026-11-20 晚开始，用户 seq 64 拍板）
+
+方案：`docs/research/full-feature-plan-2026-11-20.md`（20 项，A1–A4 / B1–B7 / C1–C4 / D1–D5）。用户决定：打包 wordfreq 并署名；测试约 10 题；语音识别默认浏览器，要查清各系统各浏览器支持情况、不支持时提示换什么浏览器、能降级到已配置模型就降级；不做本机音素模型；**所有界面语言（10 种）和所有学习语言（10 种）都要适配**。
+
+固定约束照旧：不读 `data/`；不重建 `dist/web`、`dist/server`，不碰 4174 上运行的应用；不提交 git；单条命令 50 秒内；回复中文、不要引导词和微文案；没用真实模型/浏览器验证的要明说；超出要求的改动要明说；改完提醒先停应用再 `npm start`。
+
+## 实现顺序
+1. 水平档案和难度（地基）—— **已完成**。
+2. 水平测试（约 10 题）+ 引导页/设置/记忆页入口和水平卡 —— **已完成**。
+3. 对话页：「没听懂」、难度变化说明、对话后复盘、错题小练 —— **已完成**（400 项检查通过）。
+4. 词本：FSRS、到期词进对话、词本故事、…（已截断）
+
+## memory-plan.md
+
+# 记忆功能：现状和方案（2026-11-20，用户 seq 31 要的分析；方案已发给用户，等拍板，代码没有改）
+
+## 现状（读代码得到）
+- 每轮 `coachTurn`（`server/ai/engine.ts`）先跑一次记忆分析（`memoryAnalysisSystem`，`server/ai/prompts.ts`）：从最新一句里抽最多 3 条事实（quote 必须是原句子串），同时出对话计划。候选挂在助手消息的 `meta.memoryCandidates` 上，用户点“确认记住”才写入 `memories`（`POST /api/memories`）。
+- 记忆只有类型（preference / constraint / profile / learning / episodic）和层级（core ≤ 15 / long_term），没有“适用范围”。类型直接决定页签（`server/memory-policy.ts`：learning→学习情况，episodic→对话经历，其余→个人偏好）。
+- 确认过的记忆对所有对话生效：发消息接口（`server/index.ts`）每次读全部 confirmed 记忆，核心全带，其余由 `selectRelevantMemories`（`server/ai/context.ts`）按模型挑的键、话题标签、字词重合挑最多 4 条。
+- 记忆分析拿不到场景设定（只传了 config、记忆目录、state、episodes 和最近几句），所以提示词里…（已截断）
+
+## ui-redesign.md
+
+# 界面改造（2026-11-19 起，11-20 更新）
+
+## 现状
+- 项目正式地址（`/`、`/start`、`/conversation/:id`、`/history`、`/words`、`/review`、`/memories`、`/settings`、`/onboarding`）由新设计绘制：`src/lab/brick/`（外框、首页、配色）+ `src/lab/daily/`（其余页面和字号、层次）。入口在 `src/router.ts` → `src/lab/routes.ts` 的 `appRoutes`，换设计改 `APP_THEME`。
+- **首页是 04（积木·素）的原版式**：`src/lab/brick/Home.vue`（样式写在组件自己的 scoped style 里，类名 `.bh-*`）——左边蓝色大块（小脸、大标题、“开始聊”，整块可点）、右边“自定义对话”大块、黑色复习条、最近对话；尺寸和比例与 `src/lab/mono/Home.vue` 一致，只多了长标题省略的修正。用户明确反对把它压成窄条（seq 50）。
+- 其余设计稿仍可对比：`/lab/<paper|night|blocks|mono|gallery|desk|daily|brick>`；顶部 01–08 切换条…（已截断）

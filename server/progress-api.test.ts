@@ -9,15 +9,6 @@ process.env.LLC_DATA_DIR = dataDir
 process.env.NODE_ENV = 'test'
 process.env.LLC_LAN_HOSTS = 'yujian-test.lan'
 
-let answer: (body: string) => string = () => '{}'
-let bodies: string[] = []
-
-globalThis.fetch = async (_input, init = {}) => {
-  const body = String(init.body || '')
-  bodies.push(body)
-  return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: answer(body) } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }), { status: 200, headers: { 'content-type': 'application/json' } })
-}
-
 const { app } = await import('./index.js')
 // The module, not its `db`: the handle changes when the learner's profile does.
 const database = await import('./services/database.js')
@@ -158,104 +149,6 @@ test('progress is counted from the learner\'s own messages, corrections, used wo
   assert.equal(served.statusCode, 200, served.body)
   assert.equal(served.json().languageCode, 'es')
   assert.equal(Array.isArray(served.json().days), true)
-})
-
-test('the card for a real conversation is taken from the learning record, without a request', async () => {
-  await configure()
-  bodies = []
-  database.db.exec('DELETE FROM learning_events')
-  const now = new Date().toISOString()
-  const talk = conversation()
-  for (let index = 0; index < 3; index += 1) said(talk, 'Hola', now)
-  for (let index = 0; index < 3; index += 1) mistake('agreement', now, 'la problema', 'el problema')
-  database.db.prepare("INSERT INTO learning_events (id, target_language_code, kind, category, original, improved, created_at) VALUES ('gap-1', 'es', 'gap', 'gap', 'I would like to change my appointment', 'Quisiera cambiar mi cita', ?)").run(now)
-  database.db.prepare("INSERT INTO word_entries (id, term, lemma, language, meaning, details_json, due_at, created_at, updated_at) VALUES ('word-1', 'madrugar', 'madrugar', 'es', 'to get up early', '{}', ?, ?, ?)").run(now, now, now)
-
-  const created = await app.inject({ method: 'POST', url: '/api/live' })
-  assert.equal(created.statusCode, 200, created.body)
-  const card = created.json()
-  assert.equal(bodies.length, 0)
-  assert.deepEqual(card.items.map((item: { kind: string }) => item.kind), ['pattern', 'words', 'say'])
-  assert.equal(card.items[0].category, 'agreement')
-  assert.equal(card.items[0].example, 'la problema → el problema')
-  assert.deepEqual(card.items[1].words, [{ term: 'madrugar', meaning: 'to get up early' }])
-  assert.deepEqual(card.items[2].sentences, [{ original: 'I would like to change my appointment', improved: 'Quisiera cambiar mi cita' }])
-  assert.equal(card.finishedAt, null)
-  assert.equal((await app.inject({ method: 'GET', url: '/api/live' })).json().current.id, card.id)
-
-  // A second card replaces the one never come back to.
-  const again = (await app.inject({ method: 'POST', url: '/api/live' })).json()
-  assert.notEqual(again.id, card.id)
-  assert.equal((await app.inject({ method: 'POST', url: `/api/live/${card.id}/debrief`, payload: {} })).statusCode, 404)
-
-  // Coming back: what could not be said gets a way to say it, and what was corrected stays as the learner wrote it.
-  answer = () => JSON.stringify({
-    said: [{ index: 0, improved: '¿Me puede hablar más despacio, por favor?' }],
-    corrected: [{ index: 0, category: 'tense', explanation: 'Yesterday is finished time, so the past form is used.' }],
-  })
-  const done = await app.inject({
-    method: 'POST', url: `/api/live/${again.id}/debrief`,
-    payload: {
-      interfaceLocale: 'en-US', used: [true, false, true, true],
-      stuck: ['  Could you speak more slowly?  ', ''],
-      corrected: [{ said: 'Ayer voy al cine', right: 'Ayer fui al cine' }, { said: 'same', right: 'same' }, { said: '', right: 'x' }],
-    },
-  })
-  assert.equal(done.statusCode, 200, done.body)
-  const outcome = done.json().outcome
-  assert.deepEqual(outcome.used, [true, false, true])
-  assert.deepEqual(outcome.gaps, [{ original: 'Could you speak more slowly?', improved: '¿Me puede hablar más despacio, por favor?' }])
-  assert.deepEqual(outcome.errors, [{ original: 'Ayer voy al cine', improved: 'Ayer fui al cine', explanation: 'Yesterday is finished time, so the past form is used.', category: 'tense' }])
-  assert.equal(bodies.length, 1)
-  assert.equal(bodies[0].includes('A language learner has just talked with a real person'), true)
-  assert.equal(typeof done.json().finishedAt, 'string')
-
-  const written = database.db.prepare('SELECT kind, category, original, improved, conversation_id FROM learning_events WHERE message_id = ? ORDER BY kind').all(`live:${again.id}`)
-  assert.deepEqual(written.map((item) => ({ ...item })), [
-    { kind: 'error', category: 'tense', original: 'Ayer voy al cine', improved: 'Ayer fui al cine', conversation_id: null },
-    { kind: 'gap', category: 'gap', original: 'Could you speak more slowly?', improved: '¿Me puede hablar más despacio, por favor?', conversation_id: null },
-  ])
-  // It is in the same record the conversations write into, and the request was booked as looking back.
-  const status = (await app.inject({ method: 'GET', url: '/api/learning-status' })).json()
-  assert.equal(status.languages[0].gaps.some((gap: { improved: string }) => gap.improved.includes('despacio')), true)
-  assert.equal((await app.inject({ method: 'GET', url: '/api/usage?offset=0' })).json().tasks.some((item: { task: string }) => item.task === 'review'), true)
-
-  // Sent twice, it is answered once.
-  const repeated = await app.inject({ method: 'POST', url: `/api/live/${again.id}/debrief`, payload: { stuck: ['again'] } })
-  assert.equal(repeated.json().outcome.gaps.length, 1)
-  assert.equal(bodies.length, 1)
-  const listed = (await app.inject({ method: 'GET', url: '/api/live' })).json()
-  assert.equal(listed.current, null)
-  assert.equal(listed.past[0].id, again.id)
-
-  // Taking the session away takes what it wrote with it.
-  assert.equal((await app.inject({ method: 'DELETE', url: `/api/live/${again.id}` })).json().deleted, true)
-  assert.equal(database.db.prepare('SELECT COUNT(*) AS count FROM learning_events WHERE message_id = ?').get(`live:${again.id}`)!.count, 0)
-})
-
-test('a debrief with nothing written asks no model; one the model answers badly is not saved half done', async () => {
-  await configure()
-  bodies = []
-  const empty = (await app.inject({ method: 'POST', url: '/api/live' })).json()
-  const nothing = await app.inject({ method: 'POST', url: `/api/live/${empty.id}/debrief`, payload: { used: [true] } })
-  assert.equal(nothing.statusCode, 200, nothing.body)
-  assert.equal(bodies.length, 0)
-  assert.deepEqual([nothing.json().outcome.gaps, nothing.json().outcome.errors], [[], []])
-
-  // The wording offered is not in the language being learned: the learner is told, and their note is not dropped quietly.
-  answer = () => JSON.stringify({ said: [{ index: 0, improved: '请说慢一点' }], corrected: [] })
-  const next = (await app.inject({ method: 'POST', url: '/api/live' })).json()
-  const refused = await app.inject({ method: 'POST', url: `/api/live/${next.id}/debrief`, payload: { stuck: ['Speak slowly please'] } })
-  assert.equal(refused.statusCode, 502, refused.body)
-  assert.equal((await app.inject({ method: 'GET', url: '/api/live' })).json().current.id, next.id)
-  assert.equal(database.db.prepare('SELECT COUNT(*) AS count FROM learning_events WHERE message_id = ?').get(`live:${next.id}`)!.count, 0)
-
-  // A correction is the other person's and stays, under no particular kind when the model names none there is.
-  answer = () => JSON.stringify({ said: [], corrected: [{ index: 0, category: 'spelling-ish', explanation: '' }] })
-  const poor = await app.inject({ method: 'POST', url: `/api/live/${next.id}/debrief`, payload: { corrected: [{ said: 'Tengo veinte anos', right: 'Tengo veinte años' }] } })
-  assert.equal(poor.statusCode, 200, poor.body)
-  assert.deepEqual(poor.json().outcome.gaps, [])
-  assert.deepEqual(poor.json().outcome.errors, [{ original: 'Tengo veinte anos', improved: 'Tengo veinte años', explanation: '', category: 'other' }])
 })
 
 test('memories written out can be taken in again, by another learner too', async () => {

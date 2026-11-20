@@ -26,7 +26,6 @@ const pages = [
   { path: 'review', view: 'Review' },
   { path: 'memories', view: 'Memories' },
   { path: 'progress', view: 'Progress' },
-  { path: 'progress/live', view: 'Live' },
   { path: 'settings', view: 'Settings' },
   { path: 'onboarding', view: 'Onboarding', plain: true },
   { path: 'placement', view: 'Placement', plain: true },
