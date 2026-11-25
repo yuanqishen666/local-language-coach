@@ -5,6 +5,7 @@ import Lookup from './Lookup.vue'
 import Turn from './Turn.vue'
 import { vTip } from '../core/tip'
 import { useConversationPage } from '../logic/ConversationPage'
+import { aboveComposer } from '../../conversation-extras'
 import { composerKeys, keyboardPlatform } from '../../platform'
 
 const {
@@ -118,6 +119,7 @@ watch(input, async () => {
         <div class="y-deck-in">
           <p v-if="conversation.status === 'archived'" class="y-deck-note">{{ t('conversation.archivedContinue') }}</p>
           <p v-if="error" class="y-error" role="alert">{{ error }}</p>
+          <component :is="extra" v-for="(extra, at) in aboveComposer" :key="at" :conversation="conversation" />
           <template v-if="call !== 'off'">
             <div class="y-call" :class="call" role="group" :aria-label="t('call.start')">
               <p class="y-call-state" role="status" aria-live="polite">

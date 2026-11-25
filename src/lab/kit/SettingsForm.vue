@@ -11,7 +11,7 @@ const {
   providerDrafts, providerName, providerStatus, savedCapabilityMatches, verified, providerSignature, hasModelList, modelsLoaded,
   currentModelIsOfficial, modelLabel, availableModels, activateModel, keys, invalidateProvider, updateActiveModelProfile, result,
   clearingKey, savingProvider, testing, loadingModels, deleteProviderKey, loadModels, test, saveProvider, providerHasChanges,
-  webLookupEnabled, webLookupDirty, saveWebLookup, currentProviderName, remote, loadingRemote, loadRemote, copyRemoteUrl,
+  webLookupEnabled, webLookupDirty, saveWebLookup, currentProviderName, ownFolder, remote, loadingRemote, loadRemote, copyRemoteUrl,
   downloadBackup, confirmReset, resetting, resetAllConfig, store, t, locale,
 } = useSettingsPage()
 
@@ -173,12 +173,12 @@ const corrections = [
             <div><dt>{{ t('settings.level') }}</dt><dd>{{ store.settings.learning.proficiency }}</dd></div>
             <div><dt>{{ t('settings.providerShort') }}</dt><dd>{{ currentProviderName }}</dd></div>
           </dl>
-          <dl class="st-files">
+          <dl v-if="ownFolder" class="st-files">
             <div><dt>{{ t('settings.localDatabase') }}</dt><dd>data/app.db</dd></div>
             <div><dt>{{ t('settings.appConfig') }}</dt><dd>data/config.json</dd></div>
             <div><dt>{{ t('settings.secretFile') }}</dt><dd>data/secrets.json · 0600</dd></div>
           </dl>
-          <article class="st-remote" :class="{ active: remote?.active }">
+          <article v-if="ownFolder" class="st-remote" :class="{ active: remote?.active }">
             <header>
               <Icon name="phone" :size="18" />
               <h3>{{ t('settings.remoteTitle') }}</h3>

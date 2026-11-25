@@ -770,7 +770,9 @@ export async function localizeConversationSetup(setup: ConversationSetup, interf
   })
 }
 
-interface CoachTurnInput {
+export interface CoachTurnInput {
+  /** The conversation this turn is part of. */
+  conversationId: string
   setup: ConversationSetup | null
   messages: StoredConversationMessage[]
   /** Long-term memories this conversation is allowed to see. Scope is settled by the caller, before any scoring. */
@@ -804,7 +806,27 @@ export interface TurnLevel {
   rewritten: boolean
 }
 
-export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: CoachingResponse; level?: TurnLevel; context: { tight: boolean; recentMessages: number; episodes: number; memories: number; memoryIds: string[]; usedMemories: Array<{ id: string; value: string; memoryType: string }>; dialoguePlan: DialoguePlan; dialoguePolicy: DialoguePolicy } }> {
+/** A turn once it is answered: the reply with its coaching, and what went into writing it. */
+export interface CoachTurnResult {
+  coaching: CoachingResponse
+  level?: TurnLevel
+  context: {
+    tight: boolean
+    recentMessages: number
+    episodes: number
+    memories: number
+    memoryIds: string[]
+    usedMemories: Array<{ id: string; value: string; memoryType: string }>
+    dialoguePlan: DialoguePlan
+    dialoguePolicy: DialoguePolicy
+  }
+}
+
+/**
+ * Reads the learner's turn before anything is written back: what is worth remembering from it, how well it was
+ * said, where that leaves the difficulty, and what the reply should do.
+ */
+export async function readTurn(input: CoachTurnInput) {
   const config = await getRequestConfig(input.interfaceLocale, input.learning)
   // The learner's turn is read against the difficulty the conversation stands at; the reply may be written a step off it.
   if (input.difficulty) config.learning.difficultyStep = replyStep(input.difficulty.state)
@@ -926,6 +948,20 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
   }
   const lookupDecision = turnAnalysis.lookup
   const dialoguePolicy = deriveDialoguePolicy(memoryAnalysis.dialoguePlan, dynamics, lookupDecision, input.state)
+  return { config, client, provider, latestUser, dynamics, memoryAnalysis, turnAnalysis, rescueRequired, level, lookupDecision, dialoguePolicy, relevantMemoryKeys, cooldownMemoryIds }
+}
+
+/** What is settled about a turn before its reply is written. However the reply is written, it starts from this. */
+export type TurnReading = Awaited<ReturnType<typeof readTurn>>
+
+/** Writes the reply to a turn that has been read. */
+export type ReplyWriter = (input: CoachTurnInput, reading: TurnReading) => Promise<CoachTurnResult>
+
+/** The way a reply is written here: one line from the partner, looked up when it needs to be, and written again once when it reads unnaturally or too hard. */
+export async function writeReply(input: CoachTurnInput, reading: TurnReading): Promise<CoachTurnResult> {
+  const { config, client, provider, latestUser, dynamics, memoryAnalysis, turnAnalysis, rescueRequired, lookupDecision, dialoguePolicy, relevantMemoryKeys, cooldownMemoryIds } = reading
+  // One reading can be written from more than once, so what this writing finds out about the level is kept apart from it.
+  const level = reading.level && { ...reading.level }
 
   const coachReplyComplete = (value: { roleReply: string; lookup: TurnLookupDecision; reconstruction: unknown }) => Boolean(
     value.roleReply.trim() &&
@@ -1135,6 +1171,14 @@ export async function coachTurn(input: CoachTurnInput): Promise<{ coaching: Coac
       dialoguePolicy,
     },
   }
+}
+
+/**
+ * Answers the learner's turn. A `write` given here writes the reply in place of writeReply; it starts from the same
+ * reading, and can still call writeReply for a turn it cannot answer its own way.
+ */
+export async function coachTurn(input: CoachTurnInput, write: ReplyWriter = writeReply): Promise<CoachTurnResult> {
+  return write(input, await readTurn(input))
 }
 
 export async function summarizeEpisode(messages: StoredConversationMessage[], interfaceLocale?: string) {

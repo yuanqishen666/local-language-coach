@@ -1,0 +1,26 @@
+语见腾讯云部署说明
+
+部署版本：网页版，数据和 API Key 保存在访问者浏览器中。服务器仅提供静态文件，无需 Node 进程。
+域名：https://school-work.cn/
+服务器网站目录：/usr/yujian/site
+服务器主配置：/etc/nginx/nginx.conf
+原配置备份：/root/nginx-backup-yujian-20261123-2136
+
+本机重新构建和打包（项目根目录运行）：
+npm run web:build
+COPYFILE_DISABLE=1 tar --no-xattrs -czf deploy/yujian-site.tar.gz -C dist site
+
+上传 deploy/yujian-site.tar.gz 到服务器 /usr/yujian 后解压：
+tar -xzf /usr/yujian/yujian-site.tar.gz -C /usr/yujian
+
+更新时保留已有 site/assets，不能先删除整个 site，以免已打开页面加载旧资源失败。
+配置变更后执行：
+nginx -t && systemctl reload nginx
+
+nginx.conf 为完整主配置，不再 include 旧 conf.d 站点。旧配置仍留在备份中。
+HTTPS 使用现有证书 /etc/nginx/ssl/school-work.cn_bundle.pem 和同目录 school-work.cn.key。
+磁盘证书到期时间：2027-01-22 23:59:59 UTC（北京时间 2027-01-23 07:59:59）。
+
+回退配置：
+cp /root/nginx-backup-yujian-20261123-2136/nginx.conf /etc/nginx/nginx.conf
+nginx -t && systemctl reload nginx

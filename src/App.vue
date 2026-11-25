@@ -4,10 +4,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from './stores/app'
 import { api } from './api'
+import { shellWelcome } from './lab/useShell'
 import AppIcon from './components/AppIcon.vue'
 import { displayTargetLanguage, localeMeta, normalizeUiLocale } from '../shared/locales'
 
 const store = useAppStore()
+const props = defineProps<{ prepared?: boolean, onInterfaceChange?: (value: ReturnType<typeof normalizeUiLocale>) => void }>()
 const route = useRoute()
 const router = useRouter()
 const { t, locale } = useI18n()
@@ -24,12 +26,11 @@ function applyDocumentLocale(value: unknown) {
 }
 
 onMounted(async () => {
-  await store.load()
-  if (store.settings) {
-    locale.value = store.settings.ui.locale
-    applyDocumentLocale(store.settings.ui.locale)
+  if (!props.prepared) {
+    await store.load()
+    const open = route.path === '/onboarding' || shellWelcome.some((item) => item.to === route.path)
+    if (!store.settings?.setupComplete && !open) await router.replace('/onboarding')
   }
-  if (!store.settings?.setupComplete && route.path !== '/onboarding') router.replace('/onboarding')
   await refreshReviewDue()
 })
 
@@ -38,11 +39,12 @@ async function refreshReviewDue() {
   catch { reviewDue.value = 0 }
 }
 
-watch(() => store.settings?.ui.locale, (value) => {
+watch(() => [store.interfaceLanguage, store.settings?.ui.locale, store.settings?.setupComplete] as const, ([value, saved]) => {
   if (!value) return
   locale.value = value
-  applyDocumentLocale(value)
+  if (value === saved) props.onInterfaceChange?.(value)
 })
+watch(locale, applyDocumentLocale, { immediate: true })
 
 watch(() => route.path, async () => {
   mobileMoreOpen.value = false

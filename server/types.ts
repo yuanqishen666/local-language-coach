@@ -2,6 +2,7 @@ import type { ReviewedWord } from '../shared/wordbook.js'
 export type { UiLocale } from '../shared/locales.js'
 import type { UiLocale } from '../shared/locales.js'
 import type { Certainty } from '../shared/variants.js'
+import type { ReplyBeat } from '../shared/reply.js'
 import type { ErrorCategory, MemoryAbout, MemoryDurability, MemoryFrame, MemoryKind, MemoryLayer } from '../shared/memory.js'
 import type { LocalStyleCard, SceneFactPolicy, SceneInitiativeMode, SceneOrigin, SceneParticipant, SceneSafetyClass } from '../shared/conversation-scenes.js'
 
@@ -124,6 +125,12 @@ export interface CoachingResponse {
     certainty?: Certainty
   }>
   roleReply: string
+  /**
+   * The reply told in several parts, in order. Absent when the reply is the one line in roleReply, as every reply
+   * written by writeReply is. When present, roleReply still holds all that is said, without the narration, so that
+   * reading aloud, translating and the next turn work from it as they do for any reply.
+   */
+  beats?: ReplyBeat[]
   /** A short answer in the learner's own language to something they asked in it. Shown beside the reply, never as part of it. */
   aside?: string
   roleReplyTranslation?: string

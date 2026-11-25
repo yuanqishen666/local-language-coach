@@ -7,6 +7,7 @@ import { api } from '../../api'
 import { modelErrorKey, translationErrorMessage } from '../../provider-error-copy'
 import { browserSpeech, type SpeechFailure } from '../../speech'
 import { displayTargetLanguage } from '../../../shared/locales'
+import { replyParts, toldInParts } from '../../../shared/reply'
 import { useAppStore } from '../../stores/app'
 import { spokenRate, type LevelAfterHelp } from '../../level'
 import { sentencesOf, showText, textHeld } from '../../listening'
@@ -29,7 +30,8 @@ const showOriginal = ref(false)
 const showHint = ref(false)
 const isPartnerLine = computed(() => props.message.role === 'assistant')
 // A reply that quotes what was looked up on the web keeps its wording: the sources point at it.
-const canSimplify = computed(() => isPartnerLine.value && !props.message.meta.grounding)
+// A reply told in several parts would come back as one line, without who says what.
+const canSimplify = computed(() => isPartnerLine.value && !props.message.meta.grounding && !toldInParts(props.message.meta.beats))
 const lineHint = computed(() => props.message.meta.lineHints?.[String(locale.value)] || '')
 const slowId = computed(() => `message-${props.message.id}-slow`)
 const slowPlaying = computed(() => browserSpeech.activeId.value === slowId.value)
@@ -109,6 +111,11 @@ function saySlower() {
   })
   if (outcome === 'started') signal('slower')
 }
+
+// A reply can be told in several parts: narration, and lines each said by someone named. Any other message is one line.
+const beats = computed(() => replyParts(props.message.content, isPartnerLine.value ? props.message.meta.beats : undefined))
+// Narration is read, never heard, so it stays in view while the lines are held back.
+const narration = computed(() => beats.value.filter((beat) => beat.type === 'narration'))
 
 // Heard before seen: the text of this line stays out of view until it is asked for.
 const textHidden = computed(() => isPartnerLine.value && textHeld(props.message.id))
@@ -204,5 +211,5 @@ function lookupText(context: string, enabled = true) {
   return { context, enabled, onLookup: (term: string, sentence: string) => { emit('lookup', term, sentence); signal('lookup') } }
 }
 
-  return { route, t, locale, showTranslation, translating, translationError, SLOWER, store, helpOpen, simplifying, hinting, helpError, showOriginal, showHint, isPartnerLine, canSimplify, lineHint, slowId, slowPlaying, canHear, conversationPath, messagePath, signal, helpFailure, saySimpler, giveHint, speechFailure, saySlower, textHidden, sentences, wholeId, partPrefix, wholePlaying, partPlaying, hearAgain, revealText, pickWord, groundingLinks, coachingVisible, memoryCandidates, usedMemories, memoryLayer, memoryDestination, toggleTranslation, lookupText }
+  return { route, t, locale, showTranslation, translating, translationError, SLOWER, store, helpOpen, simplifying, hinting, helpError, showOriginal, showHint, isPartnerLine, canSimplify, lineHint, slowId, slowPlaying, canHear, conversationPath, messagePath, signal, helpFailure, saySimpler, giveHint, speechFailure, saySlower, beats, narration, textHidden, sentences, wholeId, partPrefix, wholePlaying, partPlaying, hearAgain, revealText, pickWord, groundingLinks, coachingVisible, memoryCandidates, usedMemories, memoryLayer, memoryDestination, toggleTranslation, lookupText }
 }

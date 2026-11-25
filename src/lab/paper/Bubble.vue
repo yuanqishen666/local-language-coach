@@ -11,7 +11,7 @@ const emit = defineEmits<{
   lookup: [term: string, sentence: string]
   remember: [item: NonNullable<MessageMeta['memoryCandidates']>[number]]
 }>()
-const { t, locale, showTranslation, translating, translationError, groundingLinks, coachingVisible, memoryCandidates, toggleTranslation, lookupText } = useMessageBubble(props, emit)
+const { t, locale, showTranslation, translating, translationError, groundingLinks, coachingVisible, memoryCandidates, toggleTranslation, lookupText, beats } = useMessageBubble(props, emit)
 </script>
 
 <template>
@@ -19,7 +19,13 @@ const { t, locale, showTranslation, translating, translationError, groundingLink
     <template v-if="message.role === 'assistant'">
       <div class="said">
         <i class="who" aria-hidden="true">{{ partnerInitial }}</i>
-        <p v-text-lookup="lookupText(message.content)" class="line" :lang="targetLanguageCode"><WordText :text="message.content" :language-code="targetLanguageCode" @pick="(term) => emit('lookup', term, message.content)" /></p>
+        <template v-for="(beat, at) in beats" :key="at">
+          <p v-if="beat.type === 'narration'" class="reply-told">{{ beat.text }}</p>
+          <template v-else>
+            <small v-if="beat.name" class="reply-name">{{ beat.name }}</small>
+            <p v-text-lookup="lookupText(beat.text)" class="line" :lang="targetLanguageCode"><WordText :text="beat.text" :language-code="targetLanguageCode" @pick="(term) => emit('lookup', term, beat.text)" /></p>
+          </template>
+        </template>
         <p v-if="showTranslation" class="gloss">{{ message.meta.roleReplyTranslations?.[String(locale)] }}</p>
         <p v-if="translationError" class="pp-error">{{ translationError }}</p>
         <div class="tools">

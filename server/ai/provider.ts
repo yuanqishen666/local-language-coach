@@ -1,6 +1,6 @@
 import type { AppConfig, ProviderConfig, StructuredOutputMode } from '../types.js'
 import { CUSTOM_PROVIDER_ID, getConfig, getSecrets } from '../services/config.js'
-import { meterReply } from './usage-meter.js'
+import { admitUsage, meterReply } from './usage-meter.js'
 import { issueProviderSetupReceipt } from '../services/provider-setup-receipt.js'
 import { parseModelJson } from '../utils/json.js'
 import { coachTurnSchema, providerCertificationSchema, responseJsonSchema } from './schemas.js'
@@ -109,10 +109,25 @@ function retryDelay(response: Response | undefined, attempt: number) {
   return Math.min(650 * 2 ** attempt + Math.floor(Math.random() * 250), 5_000)
 }
 
+/**
+ * A request turned away before it is sent is passed on the way a refusal by the model service itself is,
+ * so that nothing further up takes it for a poor answer and asks again.
+ */
+async function admitted() {
+  try {
+    await admitUsage()
+  } catch (error) {
+    if (error instanceof ProviderRequestError) throw error
+    const refusal = error as { message?: string; statusCode?: number; code?: string } | undefined
+    throw new ProviderRequestError(refusal?.message || 'The request was not sent.', refusal?.statusCode || 429, refusal?.code || 'USAGE_REFUSED')
+  }
+}
+
 export async function fetchWithRetry(url: string, init: RequestInit, options: { timeoutMs?: number; retries?: number } = {}) {
   const timeoutMs = options.timeoutMs ?? 30_000
   const retries = options.retries ?? 0
   let lastNetworkError: unknown
+  await admitted()
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {

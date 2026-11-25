@@ -12,7 +12,7 @@ const emit = defineEmits<{
   lookup: [term: string, sentence: string]
   remember: [item: NonNullable<MessageMeta['memoryCandidates']>[number]]
 }>()
-const { t, locale, showTranslation, translating, translationError, groundingLinks, coachingVisible, memoryCandidates, toggleTranslation, lookupText } = useMessageBubble(props, emit)
+const { t, locale, showTranslation, translating, translationError, groundingLinks, coachingVisible, memoryCandidates, toggleTranslation, lookupText, beats } = useMessageBubble(props, emit)
 const mascot = inject<Component | null>('labMascot', null)
 
 // Presentation only: corrections become margin notes, tied to the words they are about.
@@ -72,7 +72,13 @@ const open = ref(false)
         <i class="c-who" aria-hidden="true"><component :is="mascot" v-if="mascot" /><template v-else>{{ partnerInitial }}</template></i>
         <div class="c-side">
           <div class="c-said">
-            <p v-text-lookup="lookupText(message.content)" class="c-line" :lang="targetLanguageCode"><WordText :text="message.content" :language-code="targetLanguageCode" @pick="(term) => emit('lookup', term, message.content)" /></p>
+            <template v-for="(beat, at) in beats" :key="at">
+              <p v-if="beat.type === 'narration'" class="reply-told">{{ beat.text }}</p>
+              <template v-else>
+                <small v-if="beat.name" class="reply-name">{{ beat.name }}</small>
+                <p v-text-lookup="lookupText(beat.text)" class="c-line" :lang="targetLanguageCode"><WordText :text="beat.text" :language-code="targetLanguageCode" @pick="(term) => emit('lookup', term, beat.text)" /></p>
+              </template>
+            </template>
             <p v-if="showTranslation" class="c-gloss">{{ message.meta.roleReplyTranslations?.[String(locale)] }}</p>
           </div>
           <p v-if="translationError" class="c-error">{{ translationError }}</p>

@@ -16,9 +16,11 @@
     "internal:build": "pnpm clean:server && vite build && tsc -p tsconfig.server.json",
     "internal:serve": "node dist/server/server/index.js",
     "clean:server": "node --input-type=module -e \"import { rm } from 'node:fs/promises'; await rm('dist/server', { recursive: true, force: true })\"",
+    "web:dev": "vite --config vite.web.config.ts",
+    "web:build": "vite build --config vite.web.config.ts",
     "app": "tsx cli/index.ts",
-    "test": "tsx --test server/ai/*.test.ts server/*.test.ts src/*.test.ts",
-    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "test": "tsx --test server/ai/*.test.ts server/*.test.ts src/*.test.ts web/*.test.ts web/node/*.test.ts",
+    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit && vue-tsc --noEmit -p tsconfig.web.json",
     "preview": "node scripts/bootstrap.mjs start --rebuild"
   },
   "dependencies": {
@@ -39,6 +41,7 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@sqlite.org/sqlite-wasm": "3.54.1-build1",
     "@types/node": "^24.10.0",
     "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "^6.0.1",

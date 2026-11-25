@@ -34,8 +34,8 @@ watch(() => route.path, () => { menu.value = false })
       </nav>
       <nav class="y-nav foot">
         <RouterLink to="/settings" class="y-item"><i class="code">{{ languageCode.toUpperCase() }}</i><span>{{ language }}</span><em v-if="level" class="level">{{ level }}</em></RouterLink>
-        <RouterLink v-for="item in shellFoot" :key="item.to" :to="overLimit ? '/settings?tab=usage' : item.to" class="y-item solo" :class="{ on: navOn(item.to) }" :aria-current="navOn(item.to) ? 'page' : undefined">
-          <Icon :name="item.icon" :size="16" :weight="1.8" /><span>{{ t(item.label) }}</span><i v-if="overLimit" class="y-nav-dot" role="img" :aria-label="t('usage.reached')" :title="t('usage.reached')"></i>
+        <RouterLink v-for="item in shellFoot" :key="item.to" :to="overLimit && item.to === '/settings' ? '/settings?tab=usage' : item.to" class="y-item solo" :class="{ on: navOn(item.to) }" :aria-current="navOn(item.to) ? 'page' : undefined">
+          <Icon :name="item.icon" :size="16" :weight="1.8" /><span>{{ t(item.label) }}</span><i v-if="overLimit && item.to === '/settings'" class="y-nav-dot" role="img" :aria-label="t('usage.reached')" :title="t('usage.reached')"></i>
         </RouterLink>
       </nav>
     </aside>

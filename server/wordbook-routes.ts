@@ -5,7 +5,7 @@
 import type { FastifyInstance } from 'fastify'
 import { nanoid } from 'nanoid'
 import { getConfig } from './services/config.js'
-import { db, row, rows } from './services/database.js'
+import { db, perDatabase, row, rows } from './services/database.js'
 import { normalizeUiLocale } from '../shared/locales.js'
 import { isErrorCategory, type ErrorCategory } from '../shared/memory.js'
 import {
@@ -45,7 +45,7 @@ export interface ConversationStart {
 }
 
 export interface WordbookDeps {
-  createConversation(setup: ConversationSetup | null, interfaceLocale: string, learning: AppConfig['learning'], title: string | undefined, start: ConversationStart): { id: string }
+  createConversation(setup: ConversationSetup | null, interfaceLocale: string, learning: AppConfig['learning'], title: string | undefined, start: ConversationStart): Promise<{ id: string }>
 }
 
 interface StoryRow {
@@ -147,12 +147,14 @@ export function cleanPasted(value: string) {
 }
 
 export function registerWordbookRoutes(app: FastifyInstance, deps: WordbookDeps) {
-  const running = new Map<string, Promise<unknown>>()
+  const running = perDatabase(() => new Map<string, Promise<unknown>>())
   function once<T>(key: string, work: () => Promise<T>): Promise<T> {
-    const current = running.get(key) as Promise<T> | undefined
+    // Shared with the same learner's own requests only: the answer is theirs.
+    const underWay = running()
+    const current = underWay.get(key) as Promise<T> | undefined
     if (current) return current
-    const task = work().finally(() => { if (running.get(key) === task) running.delete(key) })
-    running.set(key, task)
+    const task = work().finally(() => { if (underWay.get(key) === task) underWay.delete(key) })
+    underWay.set(key, task)
     return task
   }
 
@@ -249,7 +251,7 @@ export function registerWordbookRoutes(app: FastifyInstance, deps: WordbookDeps)
     const interfaceLocale = normalizeUiLocale(request.body?.interfaceLocale, current.ui.locale)
     const content = safeJson<StoryContent>(stored.content_json, { languageName: '', sentences: [], question: '', words: [] })
     const view = storyView(stored)
-    const created = deps.createConversation(null, interfaceLocale, learningFor(current, stored.language_code, content.languageName), stored.title, {
+    const created = await deps.createConversation(null, interfaceLocale, learningFor(current, stored.language_code, content.languageName), stored.title, {
       material: { kind: 'story', title: stored.title, text: content.sentences.join(' ') },
       openingLine: content.question,
       // Only the words the story really has: those are the ones the learner has just read in use.
@@ -498,7 +500,7 @@ export function registerWordbookRoutes(app: FastifyInstance, deps: WordbookDeps)
       if (open) return { id: open }
       const setup = normalizeConversationSetup(item.setup)
       if (!setup) break
-      const created = deps.createConversation(setup, interfaceLocale, learningFor(current, stored.language_code, content.languageName), undefined, {
+      const created = await deps.createConversation(setup, interfaceLocale, learningFor(current, stored.language_code, content.languageName), undefined, {
         words: { ids: item.words.map((word) => word.wordId), source: 'path' },
       })
       item.conversationId = created.id

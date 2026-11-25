@@ -1,6 +1,7 @@
 import type { UiLocale } from '../shared/locales'
 import type { MemoryLayer } from '../shared/memory'
 import type { ReviewedWord } from '../shared/wordbook'
+import type { ReplyBeat } from '../shared/reply'
 import type { LocalStyleCard, SceneFactPolicy, SceneInitiativeMode, SceneOrigin, SceneParticipant, SceneSafetyClass } from '../shared/conversation-scenes'
 
 export interface ProviderModelProfile {
@@ -104,6 +105,8 @@ export interface MessageMeta {
   reviewedWords?: ReviewedWord[]
   roleReplyTranslation?: string
   roleReplyTranslations?: Record<string, string>
+  /** The reply told in several parts, in order. Absent when it is the one line in the message's content. */
+  beats?: ReplyBeat[]
   /** A short answer, in the learner's own language, to something they asked in it. */
   aside?: string
   /** The line as it was first written, kept when it has been said again more simply. */

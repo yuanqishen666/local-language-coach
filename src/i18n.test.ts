@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createI18n } from 'vue-i18n'
 import { UI_LOCALES } from '../shared/locales.js'
+import { webMessages, webWord } from '../web/words.js'
 import { buildMessages, copy } from './i18n/copy.js'
 
 function flatten(value: Record<string, unknown>, prefix = ''): Record<string, string> {
@@ -30,6 +31,20 @@ test('all ten interface languages contain the same non-empty UI keys', () => {
     const localized = flatten(messages[locale])
     assert.deepEqual(Object.keys(localized).sort(), reference, locale)
     assert.deepEqual(Object.entries(localized).filter(([, value]) => !value.trim()), [], locale)
+  }
+})
+
+test('the web backup link has a localized label before and after any backup', () => {
+  const i18n = createI18n({ legacy: false, locale: 'zh-CN', fallbackLocale: false })
+  for (const { locale, messages } of webMessages()) i18n.global.mergeLocaleMessage(locale, messages)
+
+  for (const locale of UI_LOCALES) {
+    i18n.global.locale.value = locale
+    assert.equal(i18n.global.t('web.backup.navNow'), webWord('navNever', locale), locale)
+
+    const recent = `${webWord('nav', locale)} · ${new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(0, 'day')}`
+    i18n.global.mergeLocaleMessage(locale, { web: { backup: { navNow: recent } } })
+    assert.equal(i18n.global.t('web.backup.navNow'), recent, locale)
   }
 })
 

@@ -125,9 +125,24 @@ You can also download the [latest source archive](https://github.com/yuanqishen6
 
 Run the same installer again to update while keeping existing learning data. When Yujian opens, choose the interface and learning languages, set your level, then add your model under **Settings → Models & keys**.
 
+### Web version
+
+The same app can be built as static files that run entirely in a browser, for any static file host that answers an address naming no file with `index.html`. Once `npm start` has set the project up:
+
+```bash
+npm run web:build   # writes the site to dist/site
+npm run web:dev     # to work on it, at http://127.0.0.1:5174
+```
+
+In the web version, learning data is kept in the browser and the model provider is called straight from the page, so it works with providers that accept calls from web pages. Browser data can be cleared, so the web version has a **Backup** page. A backup is a zip of the files the installed app keeps in its `data` folder: unzip one into that folder to continue on a computer, or zip that folder, with the app stopped, to continue in a browser. Reading a pasted web address, opening Yujian from other devices at home and remote access need the installed app.
+
+[`web/nginx.example.conf`](web/nginx.example.conf) is an example of serving the site with Nginx. When putting a newer version up, leave the files of the version before under `assets` in place: pages still open go on asking for them, and say that there is a newer version. The first time a newer version starts in a browser, it sets a copy of what that browser keeps aside, and puts it back if it cannot open it.
+
 ## Privacy
 
 Conversations, saved words, reviews, memories, settings, and API keys stay on the current computer. Yujian includes no telemetry. Only the model provider you choose receives the content needed to produce the current reply.
+
+In the web version they stay in the current browser instead, and the site that serves the pages receives none of them.
 
 Learning data can be backed up at any time. When several people share one computer, each learner keeps a separate conversation history, wordbook, memory, and level.
 

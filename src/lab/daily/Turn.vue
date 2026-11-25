@@ -18,7 +18,7 @@ const emit = defineEmits<{
   undo: [item: NonNullable<MessageMeta['memoryCandidates']>[number]]
   level: [level: LevelAfterHelp]
 }>()
-const { t, locale, showTranslation, translating, translationError, groundingLinks, coachingVisible, memoryCandidates, usedMemories, memoryLayer, memoryDestination, toggleTranslation, lookupText, helpOpen, simplifying, hinting, helpError, showOriginal, showHint, canSimplify, lineHint, slowPlaying, canHear, saySimpler, giveHint, saySlower, pickWord, textHidden, sentences, wholePlaying, partPlaying, hearAgain, revealText } = useMessageBubble(props, emit)
+const { t, locale, showTranslation, translating, translationError, groundingLinks, coachingVisible, memoryCandidates, usedMemories, memoryLayer, memoryDestination, toggleTranslation, lookupText, helpOpen, simplifying, hinting, helpError, showOriginal, showHint, canSimplify, lineHint, slowPlaying, canHear, saySimpler, giveHint, saySlower, pickWord, textHidden, sentences, wholePlaying, partPlaying, hearAgain, revealText, beats, narration } = useMessageBubble(props, emit)
 
 // Presentation only: corrections become margin notes, tied to the words they are about. A note
 // says what sort of remark it is and shows the change; the reasoning opens when it is clicked.
@@ -109,6 +109,7 @@ function pick(index: number) {
     <div class="y-msg">
       <template v-if="message.role === 'assistant'">
         <p v-if="message.meta.aside" class="y-aside" :aria-label="t('help.aside')">{{ message.meta.aside }}</p>
+        <template v-if="textHidden"><p v-for="(beat, at) in narration" :key="at" class="reply-told">{{ beat.text }}</p></template>
         <div v-if="textHidden" class="y-held" role="group" :aria-label="t('settings.listenFirst')">
           <button type="button" class="y-btn sm" :class="{ live: wholePlaying }" @click="hearAgain()"><Icon :name="wholePlaying ? 'stop' : 'volume'" :size="14" :weight="2" />{{ wholePlaying ? t('speech.stop') : t('listen.again') }}</button>
           <button v-tip="t('help.slowerTip')" type="button" class="y-link" :class="{ on: slowPlaying }" @click="saySlower">{{ t('listen.slow') }}</button>
@@ -116,7 +117,13 @@ function pick(index: number) {
           <button type="button" class="y-link y-held-show" @click="revealText"><Icon name="eye" :size="13" :weight="2" />{{ t('listen.show') }}</button>
         </div>
         <template v-else>
-        <p v-text-lookup="lookupText(message.content)" class="y-line" :class="{ words: helpOpen }" :lang="targetLanguageCode"><WordText :text="message.content" :language-code="targetLanguageCode" @pick="pickWord" /></p>
+        <template v-for="(beat, at) in beats" :key="at">
+          <p v-if="beat.type === 'narration'" class="reply-told">{{ beat.text }}</p>
+          <template v-else>
+            <small v-if="beat.name" class="reply-name">{{ beat.name }}</small>
+            <p v-text-lookup="lookupText(beat.text)" class="y-line" :class="{ words: helpOpen }" :lang="targetLanguageCode"><WordText :text="beat.text" :language-code="targetLanguageCode" @pick="pickWord" /></p>
+          </template>
+        </template>
         <p v-if="showOriginal && message.meta.originalReply" class="y-gloss y-was" :lang="targetLanguageCode">{{ message.meta.originalReply }}</p>
         <p v-if="showTranslation" class="y-gloss">{{ message.meta.roleReplyTranslations?.[String(locale)] }}</p>
         <p v-if="showHint && lineHint" class="y-gloss y-hint">{{ lineHint }}</p>

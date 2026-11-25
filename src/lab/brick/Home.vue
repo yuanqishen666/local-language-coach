@@ -5,6 +5,7 @@ import Face from '../blocks/Face.vue'
 import { vTip } from '../core/tip'
 import { formatWhen } from '../kit/when'
 import { useHomePage } from '../logic/HomePage'
+import { betaLabelsFor, betaLink, betaPath } from '../../data-privacy'
 
 const { t, locale, history, creating, startError, startConversation, displayTitle, askLevel, levelLanguage, levelLanguageCode, path, pathWriting, pathError, pathStarting, suggestPath, startPathItem, pathLevel, mistakeLabel } = useHomePage()
 const due = inject<Ref<number>>('labReviewDue', ref(0))
@@ -61,6 +62,14 @@ const near = ref(false)
         </ul>
       </section>
       <p v-if="pathError" class="y-error" role="alert">{{ pathError }}</p>
+
+      <a v-if="betaPath" :href="betaLink(locale)" class="bh-tile bh-scene" aria-labelledby="bh-beta-title" aria-describedby="bh-beta-features" data-qs-id="qs-beta-entry">
+        <h2 id="bh-beta-title" data-content-source-exempt="requested-beta-entry">{{ betaLabelsFor(locale)[0] }}</h2>
+        <div id="bh-beta-features" class="bh-parts">
+          <span v-for="label in betaLabelsFor(locale).slice(1)" :key="label" data-content-source-exempt="beta-partner-scene-points-and-account-features">{{ label }}</span>
+        </div>
+        <i class="bh-arrow" aria-hidden="true"><Icon name="arrow" :size="20" :weight="2.4" /></i>
+      </a>
 
       <section v-if="history.length" class="bh-tile bh-recent">
         <header>

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { getConfig } from './services/config.js'
-import { db, row, rows } from './services/database.js'
+import { db, perDatabase, row, rows } from './services/database.js'
 import { safeJson } from './utils/json.js'
 import { normalizeUiLocale } from '../shared/locales.js'
 import { MEMORY_KIND_RULES, isMemoryKind, type MemoryDurability, type MemoryFrame, type MemoryKind } from '../shared/memory.js'
@@ -45,7 +45,7 @@ export async function ensureMemoryLocalizations(stored: Array<Record<string, any
   })
 }
 
-const consolidating = new Map<string, Promise<{ ran: boolean; reason?: string; suggestions?: number }>>()
+const consolidating = perDatabase(() => new Map<string, Promise<{ ran: boolean; reason?: string; suggestions?: number }>>())
 
 async function consolidateConversation(conversationId: string, requestedLocale?: string) {
   const current = await getConfig()
@@ -378,11 +378,11 @@ export function registerMemoryRoutes(app: FastifyInstance) {
   /** Tidies up after a conversation. Does nothing unless the learner has switched it on. */
   app.post<{ Params: { id: string }; Body: { interfaceLocale?: string } }>('/api/conversations/:id/consolidate', async (request) => {
     const id = request.params.id
-    const running = consolidating.get(id)
+    const running = consolidating().get(id)
     if (running) return running
     const task = consolidateConversation(id, request.body?.interfaceLocale)
-    consolidating.set(id, task)
+    consolidating().set(id, task)
     try { return await task }
-    finally { if (consolidating.get(id) === task) consolidating.delete(id) }
+    finally { if (consolidating().get(id) === task) consolidating().delete(id) }
   })
 }

@@ -5,6 +5,8 @@ import { LOCALE_META, TARGET_LANGUAGES, UI_LOCALES, displayTargetLanguage } from
 import Icon from '../kit/Icon.vue'
 import Face from '../blocks/Face.vue'
 import { useOnboardingPage } from '../logic/OnboardingPage'
+import { shellWelcome } from '../useShell'
+import { betaLabelsFor, betaLink, betaPath } from '../../data-privacy'
 
 const { t, step, saving, submitError, levels, TEST, draft, chooseLanguage, finish } = useOnboardingPage()
 </script>
@@ -51,6 +53,11 @@ const { t, step, saving, submitError, levels, TEST, draft, chooseLanguage, finis
           <button type="button" class="y-btn primary go push" :disabled="saving" @click="step < 3 ? step++ : finish()">{{ saving ? t('onboarding.saving') : step < 3 ? t('common.continue') : draft.level === TEST ? t('level.test') : t('onboarding.openWorkspace') }}<Icon v-if="!saving" name="arrow" :size="14" :weight="2.2" /></button>
         </div>
         <p class="y-private"><Icon name="lock" :size="12" :weight="2" />{{ t('onboarding.privacy') }}</p>
+        <p v-for="item in shellWelcome" :key="item.to" class="y-private">
+          <a v-if="item.href" :href="item.href(draft.uiLocale)" class="welcome-link">{{ t(item.label) }}</a>
+          <RouterLink v-else :to="item.to" class="welcome-link">{{ t(item.label) }}</RouterLink>
+        </p>
+        <p v-if="betaPath" class="y-private"><a :href="betaLink(draft.uiLocale)" class="welcome-link">{{ betaLabelsFor(draft.uiLocale)[0] }}</a></p>
       </footer>
     </div>
   </main>

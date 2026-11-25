@@ -2,6 +2,7 @@
 import { LOCALE_META, TARGET_LANGUAGES, UI_LOCALES, displayTargetLanguage } from '../../../shared/locales'
 import Icon from '../kit/Icon.vue'
 import { useOnboardingPage } from '../logic/OnboardingPage'
+import { shellWelcome } from '../useShell'
 
 const { t, step, saving, submitError, levels, draft, chooseLanguage, finish } = useOnboardingPage()
 </script>
@@ -39,6 +40,7 @@ const { t, step, saving, submitError, levels, draft, chooseLanguage, finish } = 
 
     <footer>
       <p class="private"><Icon name="lock" :size="13" />{{ t('onboarding.privacy') }}</p>
+      <p v-for="item in shellWelcome" :key="item.to" class="private"><RouterLink :to="item.to" class="welcome-link">{{ t(item.label) }}</RouterLink></p>
       <p v-if="submitError" class="pp-error" role="alert">{{ submitError }}</p>
       <div class="nav">
         <button v-if="step > 1" type="button" class="pp-link" :disabled="saving" @click="step--">{{ t('common.back') }}</button>

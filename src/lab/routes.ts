@@ -31,31 +31,67 @@ const pages = [
   { path: 'placement', view: 'Placement', plain: true },
 ]
 
+/** A page that is not in the list above: it brings its own component, which every design then draws inside its shell. */
+export interface AddedPage {
+  path: string
+  component: NonNullable<RouteRecordRaw['component']>
+  /** Drawn the way a conversation is, with the navigation out of the way. */
+  focus?: boolean
+  /** Drawn with no navigation around it, the way onboarding is. */
+  plain?: boolean
+}
+
+const addedPages: AddedPage[] = []
+const addedRoutes: RouteRecordRaw[] = []
+
+/** Adds a page to the app. The route tables are built when the router is created, so add it before that. */
+export function addPage(page: AddedPage) {
+  addedPages.push(page)
+}
+
+/** Adds a route that stands outside the app's pages and their shell, such as a page shown before the app can be used. */
+export function addRoute(route: RouteRecordRaw) {
+  addedRoutes.push(route)
+}
+
 /** Every app page under `base`, drawn by `theme`. */
-function themeRoutes(theme: LabTheme, base: string): RouteRecordRaw {
+function themeRoutes(theme: LabTheme, base: string, publicEntry?: { paths: string[], onboarding: boolean }): RouteRecordRaw {
   return {
     path: base,
     component: views[`./${theme}/Shell.vue`],
     meta: { bare: true, lab: theme },
-    children: pages.map((page) => ({
-      path: page.path,
-      component: views[`./${theme}/${page.view}.vue`] ?? views[`./${pagesFrom[theme] ?? 'core'}/${page.view}.vue`] ?? views[`./core/${page.view}.vue`] ?? views[`./daily/${page.view}.vue`],
-      meta: { labFocus: Boolean(page.focus), labPlain: Boolean(page.plain) },
-    })),
+    children: [
+      ...pages.map((page) => ({
+        path: page.path,
+        ...(publicEntry && page.path === (publicEntry.onboarding ? 'onboarding' : '') ? { alias: publicEntry.paths } : {}),
+        component: views[`./${theme}/${page.view}.vue`] ?? views[`./${pagesFrom[theme] ?? 'core'}/${page.view}.vue`] ?? views[`./core/${page.view}.vue`] ?? views[`./daily/${page.view}.vue`],
+        meta: { labFocus: Boolean(page.focus), labPlain: Boolean(page.plain), onboarding: page.path === 'onboarding' },
+      })),
+      ...addedPages.map((page) => ({
+        path: page.path,
+        component: page.component,
+        meta: { labFocus: Boolean(page.focus), labPlain: Boolean(page.plain) },
+      })),
+    ],
   }
 }
 
 /** The app's own pages, at the paths the page logic navigates to. */
-export const appRoutes: RouteRecordRaw[] = [
-  themeRoutes(APP_THEME, '/'),
-  { path: '/scene', redirect: '/start' },
-]
+export function appRoutes(publicEntry?: { paths: string[], onboarding: boolean }): RouteRecordRaw[] {
+  return [
+    themeRoutes(APP_THEME, '/', publicEntry),
+    { path: '/scene', redirect: '/start' },
+    ...addedRoutes,
+  ]
+}
 
 /** The same pages again under /lab/<theme>/…, one set per design. */
-export const labRoutes: RouteRecordRaw[] = [
-  { path: '/lab', redirect: '/lab/paper' },
-  ...LAB_THEMES.map((theme) => themeRoutes(theme, `/lab/${theme}`)),
-]
+export function labRoutes(): RouteRecordRaw[] {
+  return [
+    { path: '/lab', redirect: '/lab/paper' },
+    ...LAB_THEMES.map((theme) => themeRoutes(theme, `/lab/${theme}`)),
+  ]
+}
 
 function previewTheme(path: string) {
   return /^\/lab\/([^/]+)/u.exec(path)?.[1]

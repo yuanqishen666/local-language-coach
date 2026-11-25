@@ -4,7 +4,30 @@ import { mkdirSync } from 'node:fs'
 import { dataRoot } from './config.js'
 
 mkdirSync(dataRoot, { recursive: true, mode: 0o700 })
-export let db = new DatabaseSync(path.join(dataRoot, 'app.db'))
+
+/** One learner's database file, open. */
+export type Database = DatabaseSync
+
+// Where every query goes unless the program hosting the routes names another database for the work in hand.
+let shared = new DatabaseSync(path.join(dataRoot, 'app.db'))
+// Set while a database is being created or brought up to date, so those statements reach it and no other.
+let preparing: Database | undefined
+let chosen: () => Database | undefined = () => undefined
+
+function current() {
+  return preparing ?? chosen() ?? shared
+}
+
+/**
+ * The database of the work being done right now. All reading and writing goes through it, so a program
+ * that serves several learners at once can give each request its own file (see `chooseDatabaseWith`).
+ * On one computer it is always the active learner's.
+ */
+export const db: Pick<Database, 'prepare' | 'exec' | 'close'> = {
+  prepare: (...input) => current().prepare(...input),
+  exec: (...input) => current().exec(...input),
+  close: () => current().close(),
+}
 
 function createTables() {
   db.exec(`
@@ -520,11 +543,46 @@ export function databaseFile(name = 'app.db') {
   return path.join(dataRoot, name)
 }
 
+function prepare(database: Database) {
+  const before = preparing
+  preparing = database
+  try { setUp() } finally { preparing = before }
+}
+
 /** Points every query at another learner's database, creating and preparing it when it is new. */
 export function useDatabase(file: string) {
-  db.close()
-  db = new DatabaseSync(file)
-  setUp()
+  shared.close()
+  shared = new DatabaseSync(file)
+  prepare(shared)
+}
+
+/** Opens a learner's database file on its own, with its tables created or brought up to date, without touching the shared one. */
+export function openDatabase(file: string): Database {
+  const database = new DatabaseSync(file)
+  prepare(database)
+  return database
+}
+
+/**
+ * Lets the program hosting the routes say which database the work in hand uses. It is asked at every
+ * statement; answering with nothing means the shared one.
+ */
+export function chooseDatabaseWith(choose: () => Database | undefined) {
+  chosen = choose
+}
+
+/**
+ * Something kept for one learner's database and no other, such as the work under way for that learner.
+ * Each database gets its own, made the first time it is asked for.
+ */
+export function perDatabase<T extends object>(make: () => T): () => T {
+  const kept = new WeakMap<Database, T>()
+  return () => {
+    const database = current()
+    let value = kept.get(database)
+    if (!value) kept.set(database, value = make())
+    return value
+  }
 }
 
 export function rows<T>(statement: string, ...params: any[]): T[] {

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { nanoid } from 'nanoid'
 import { getConfig } from './services/config.js'
-import { db, row, rows } from './services/database.js'
+import { db, perDatabase, row, rows } from './services/database.js'
 import { conversationErrors, isPatternNoted, noteErrorPattern, recordPractice, recurringErrors } from './services/memory-store.js'
 import { normalizeUiLocale } from '../shared/locales.js'
 import { clampStep, replyStep } from '../shared/proficiency.js'
@@ -112,12 +112,14 @@ function interfaceTexts(content: StoredRecap) {
 }
 
 export function registerRecapRoutes(app: FastifyInstance) {
-  const running = new Map<string, Promise<unknown>>()
+  const running = perDatabase(() => new Map<string, Promise<unknown>>())
   function once<T>(key: string, work: () => Promise<T>): Promise<T> {
-    const current = running.get(key) as Promise<T> | undefined
+    // Shared with the same learner's own requests only: the answer is theirs.
+    const underWay = running()
+    const current = underWay.get(key) as Promise<T> | undefined
     if (current) return current
-    const task = work().finally(() => { if (running.get(key) === task) running.delete(key) })
-    running.set(key, task)
+    const task = work().finally(() => { if (underWay.get(key) === task) underWay.delete(key) })
+    underWay.set(key, task)
     return task
   }
 

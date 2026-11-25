@@ -4,6 +4,7 @@ import Icon from '../kit/Icon.vue'
 import Bubble from './Bubble.vue'
 import Lookup from './Lookup.vue'
 import { useConversationPage } from '../logic/ConversationPage'
+import { aboveComposer } from '../../conversation-extras'
 
 const {
   router, t, conversation, input, sending, chat, error, lookup, sceneStarting, partnerInitial, targetLanguageCode,
@@ -78,6 +79,7 @@ function press() {
       <div class="desk-in">
         <p v-if="conversation.status === 'archived'" class="desk-note">{{ t('conversation.archivedContinue') }}</p>
         <p v-if="error" class="pp-error" role="alert">{{ error }}</p>
+        <component :is="extra" v-for="(extra, at) in aboveComposer" :key="at" :conversation="conversation" />
         <div class="write" :class="{ busy: sending, filled: !!input.trim() }">
           <label class="sr" for="conversation-message">{{ t('conversation.openPlaceholder') }}</label>
           <textarea

@@ -12,16 +12,16 @@ const {
   providerDrafts, providerName, providerStatus, savedCapabilityMatches, verified, providerSignature, hasModelList, modelsLoaded,
   currentModelIsOfficial, modelLabel, availableModels, activateModel, keys, invalidateProvider, updateActiveModelProfile, result,
   clearingKey, savingProvider, testing, loadingModels, deleteProviderKey, loadModels, test, saveProvider, providerHasChanges,
-  webLookupEnabled, webLookupDirty, saveWebLookup, currentProviderName, remote, loadingRemote, loadRemote, copyRemoteUrl,
+  webLookupEnabled, webLookupDirty, saveWebLookup, currentProviderName, ownFolder, selfRun, remote, loadingRemote, loadRemote, copyRemoteUrl,
   downloadBackup, confirmReset, resetting, resetAllConfig, store, t, locale,
 } = useSettingsPage()
 
-const tabs = [
+const tabs = ([
   { id: 'language', icon: 'language', key: 'settings.tabLanguage' },
   { id: 'models', icon: 'plug', key: 'settings.tabModels' },
   { id: 'web', icon: 'globe', key: 'settings.tabWeb' },
   { id: 'data', icon: 'lock', key: 'settings.tabData' },
-] as const
+] as const).filter((item) => selfRun || item.id === 'language' || item.id === 'data')
 const levels = ['A2', 'B1', 'B2', 'C1'] as const
 
 // Presentation only: one provider is unfolded at a time, starting with the one in use.
@@ -184,14 +184,14 @@ const corrections = [
             <div><dt>{{ t('settings.interfaceShort') }}</dt><dd>{{ LOCALE_META[store.settings.ui.locale].nativeName }}</dd></div>
             <div><dt>{{ t('settings.targetShort') }}</dt><dd>{{ displayTargetLanguage(store.settings.learning.targetLanguageCode, locale) }}</dd></div>
             <div><dt>{{ t('settings.level') }}</dt><dd>{{ store.settings.learning.proficiency }}</dd></div>
-            <div><dt>{{ t('settings.providerShort') }}</dt><dd>{{ currentProviderName }}</dd></div>
+            <div v-if="selfRun"><dt>{{ t('settings.providerShort') }}</dt><dd>{{ currentProviderName }}</dd></div>
           </dl>
-          <dl class="st-files">
+          <dl v-if="ownFolder" class="st-files">
             <div><dt>{{ t('settings.localDatabase') }}</dt><dd>data/app.db</dd></div>
             <div><dt>{{ t('settings.appConfig') }}</dt><dd>data/config.json</dd></div>
             <div><dt>{{ t('settings.secretFile') }}</dt><dd>data/secrets.json · 0600</dd></div>
           </dl>
-          <article class="st-remote" :class="{ active: remote?.active }">
+          <article v-if="ownFolder" class="st-remote" :class="{ active: remote?.active }">
             <header>
               <Icon name="phone" :size="18" />
               <h3>{{ t('settings.remoteTitle') }}</h3>
@@ -212,12 +212,12 @@ const corrections = [
               <div class="st-actions"><button type="button" class="st-btn" :disabled="loadingRemote" @click="loadRemote">{{ t('settings.refreshStatus') }}</button></div>
             </template>
           </article>
-          <section class="st-block">
+          <section v-if="selfRun" class="st-block">
             <h3>{{ t('settings.exportTitle') }}</h3>
             <p>{{ t('settings.exportBody') }}</p>
             <button type="button" class="st-btn" @click="downloadBackup"><Icon name="download" :size="15" />{{ t('settings.downloadBackup') }}</button>
           </section>
-          <section class="st-block danger">
+          <section v-if="selfRun" class="st-block danger">
             <h3>{{ t('settings.resetTitle') }}</h3>
             <p>{{ t('settings.resetBody') }}</p>
             <button type="button" class="st-btn danger" @click="confirmReset = true">{{ t('settings.resetButton') }}</button>

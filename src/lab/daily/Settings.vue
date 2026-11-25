@@ -15,7 +15,7 @@ const {
   providerDrafts, providerName, providerStatus, savedCapabilityMatches, verified, providerSignature, hasModelList, modelsLoaded,
   currentModelIsOfficial, modelLabel, availableModels, activateModel, keys, invalidateProvider, updateActiveModelProfile, result,
   clearingKey, savingProvider, testing, loadingModels, deleteProviderKey, loadModels, test, saveProvider, providerHasChanges,
-  webLookupEnabled, webLookupDirty, saveWebLookup, memoryTidyEnabled, saveMemoryTidy, currentProviderName, remote, loadingRemote, loadRemote, copyRemoteUrl,
+  webLookupEnabled, webLookupDirty, saveWebLookup, memoryTidyEnabled, saveMemoryTidy, currentProviderName, ownFolder, selfRun, remote, loadingRemote, loadRemote, copyRemoteUrl,
   downloadBackup, confirmReset, resetting, resetAllConfig, store, t, locale,
   voiceSources, voiceInputChoice, voiceInputNotes, voiceBrowserWarning,
   registers, variantChoices, variantName, reviewProvider, saveReviewProvider,
@@ -27,13 +27,13 @@ const {
   lan, lanBusy, lanRestart, setLan, renewLanCode, copyText,
 } = useSettingsPage()
 
-const tabs = [
+const tabs = ([
   { id: 'language', key: 'settings.tabLanguage' },
   { id: 'models', key: 'settings.tabModels' },
   { id: 'usage', key: 'settings.tabUsage' },
   { id: 'web', key: 'settings.tabWeb' },
   { id: 'data', key: 'settings.tabData' },
-] as const
+] as const).filter((item) => selfRun || item.id === 'language' || item.id === 'data')
 function savedLevel() {
   const profile = store.settings ? levelOverview(store.settings.learning.targetLanguageCode)?.profile : null
   return profile ? stepName(profile.step) : ''
@@ -333,7 +333,7 @@ function ready(provider: any) {
             </span>
             <span class="y-toggle"><input v-model="memoryTidyEnabled" type="checkbox" @change="saveMemoryTidy" /><i aria-hidden="true"></i></span>
           </label>
-          <Fold :title="t('settings.remoteTitle')">
+          <Fold v-if="ownFolder" :title="t('settings.remoteTitle')">
             <template #head><em class="y-tag" :class="{ accent: remote?.active }">{{ remote?.active ? t('settings.running') : t('settings.localMode') }}</em></template>
             <div class="y-remote">
               <template v-if="remote?.active">
@@ -352,7 +352,7 @@ function ready(provider: any) {
               </template>
             </div>
           </Fold>
-          <Fold :title="t('profiles.title')" :count="profiles.length > 1 ? profiles.length : undefined">
+          <Fold v-if="selfRun" :title="t('profiles.title')" :count="profiles.length > 1 ? profiles.length : undefined">
             <div class="y-fold-in">
               <ul class="y-profiles">
                 <li v-for="profile in profiles" :key="profile.id">
@@ -405,10 +405,12 @@ function ready(provider: any) {
               <div><dt>{{ t('settings.interfaceShort') }}</dt><dd>{{ LOCALE_META[store.settings.ui.locale].nativeName }}</dd></div>
               <div><dt>{{ t('settings.targetShort') }}</dt><dd>{{ displayTargetLanguage(store.settings.learning.targetLanguageCode, locale) }}</dd></div>
               <div><dt>{{ t('settings.level') }}</dt><dd>{{ savedLevel() || store.settings.learning.proficiency }}</dd></div>
-              <div><dt>{{ t('settings.providerShort') }}</dt><dd>{{ currentProviderName }}</dd></div>
-              <div><dt>{{ t('settings.localDatabase') }}</dt><dd class="mono">data/app.db</dd></div>
-              <div><dt>{{ t('settings.appConfig') }}</dt><dd class="mono">data/config.json</dd></div>
-              <div><dt>{{ t('settings.secretFile') }}</dt><dd class="mono">data/secrets.json · 0600</dd></div>
+              <div v-if="selfRun"><dt>{{ t('settings.providerShort') }}</dt><dd>{{ currentProviderName }}</dd></div>
+              <template v-if="ownFolder">
+                <div><dt>{{ t('settings.localDatabase') }}</dt><dd class="mono">data/app.db</dd></div>
+                <div><dt>{{ t('settings.appConfig') }}</dt><dd class="mono">data/config.json</dd></div>
+                <div><dt>{{ t('settings.secretFile') }}</dt><dd class="mono">data/secrets.json · 0600</dd></div>
+              </template>
             </dl>
           </Fold>
           <Fold :title="t('credits.title')">
@@ -417,11 +419,11 @@ function ready(provider: any) {
               <p>{{ t('credits.prices') }} <a href="https://github.com/BerriAI/litellm" target="_blank" rel="noreferrer">LiteLLM · Berri AI</a> · MIT</p>
             </div>
           </Fold>
-          <div class="y-act-row">
+          <div v-if="selfRun" class="y-act-row">
             <b>{{ t('settings.exportTitle') }}</b>
             <button type="button" class="y-btn sm" @click="downloadBackup"><Icon name="download" :size="13" />{{ t('settings.downloadBackup') }}</button>
           </div>
-          <div class="y-act-row">
+          <div v-if="selfRun" class="y-act-row">
             <b>{{ t('settings.resetTitle') }}</b>
             <button type="button" class="y-btn sm danger" @click="confirmReset = true">{{ t('settings.resetButton') }}</button>
           </div>

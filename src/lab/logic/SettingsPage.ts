@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '../../api'
+import { runsForOneself, runsFromOwnFolder } from '../../install'
 import { useAppStore } from '../../stores/app'
 import { displayTargetLanguage, TARGET_LANGUAGES } from '../../../shared/locales'
 import { learningPreferencesKey, providerConfigurationKey } from '../../form-state'
@@ -49,7 +50,8 @@ const route = useRoute();
 const router = useRouter();
 const { t, locale } = useI18n();
 const requestedTab = typeof route.query.tab === "string" ? route.query.tab : "";
-const tab = ref(["models", "usage", "web", "data"].includes(requestedTab) ? requestedTab : "language");
+const selfRun = runsForOneself();
+const tab = ref((selfRun ? ["models", "usage", "web", "data"] : ["data"]).includes(requestedTab) ? requestedTab : "language");
 const testing = ref("");
 const savingProvider = ref("");
 const loadingModels = ref("");
@@ -165,6 +167,7 @@ function prepareProviderDraft(provider: Provider) {
 function syncLanguageDraft() {
   if (!store.settings) return;
   Object.assign(languageDraft.ui, store.settings.ui);
+  languageDraft.ui.locale = store.interfaceLanguage ?? store.settings.ui.locale;
   Object.assign(languageDraft.learning, store.settings.learning);
   // Bringing saved words into conversation is on unless it was switched off.
   languageDraft.learning.reviewInConversation = store.settings.learning.reviewInConversation !== false;
@@ -215,9 +218,11 @@ async function continuePracticeIfReady() {
 async function saveLanguagePreferences() {
   if (!store.settings || !languageDirty.value) return;
   const next = cloneValue(store.settings);
+  const chooseInterface = languageDraft.ui.locale !== store.interfaceLanguage;
   next.ui = { ...languageDraft.ui };
+  if (!chooseInterface) next.ui.locale = store.settings.ui.locale;
   next.learning = { ...languageDraft.learning };
-  await store.save(next);
+  await store.save(next, chooseInterface);
   syncLanguageDraft();
   await continuePracticeIfReady();
 }
@@ -677,7 +682,7 @@ function estimateKey(provider: Provider) {
 async function loadEstimate(provider: Provider) {
   const model = provider.model.trim();
   const key = estimateKey(provider);
-  if (!model || Object.hasOwn(estimates.value, key)) return;
+  if (!selfRun || !model || Object.hasOwn(estimates.value, key)) return;
   try {
     const data = await api.get<{ cost: number | null; exchanges: number }>(`/usage/estimate?provider=${encodeURIComponent(provider.id)}&model=${encodeURIComponent(model)}`);
     estimates.value[key] = data.cost;
@@ -774,7 +779,7 @@ async function switchProfile(profile: LearnerProfile) {
   try {
     await api.post(`/profiles/${profile.id}/activate`);
     // Everything on screen belongs to the learner who just left: the app starts over.
-    window.location.assign("/");
+    window.location.assign(router.resolve("/").href);
   } catch (error) {
     profileError.value = profileFailure(error);
     profileBusy.value = "";
@@ -797,6 +802,7 @@ async function removeProfile() {
 
 // Opening the app from other devices on the same network. Only the computer it runs on may change this.
 interface LanStatus { enabled: boolean; listening: boolean; code: string; addresses: string[] }
+const ownFolder = runsFromOwnFolder();
 const lan = ref<LanStatus | null>(null);
 const lanBusy = ref(false);
 const lanRestart = computed(() => Boolean(lan.value && lan.value.enabled !== lan.value.listening));
@@ -835,14 +841,18 @@ async function copyText(text: string) {
 
 initializeDrafts();
 onMounted(() => {
-  void loadUsage();
-  void loadProfiles();
-  void loadLan();
-  providerDrafts.value.forEach((provider) => { void loadEstimate(provider); });
+  if (selfRun) {
+    void loadUsage();
+    void loadProfiles();
+    providerDrafts.value.forEach((provider) => { void loadEstimate(provider); });
+  }
   browserSpeech.initialize();
-  void loadRemote();
+  if (ownFolder) {
+    void loadLan();
+    void loadRemote();
+  }
   void loadSpeechCapabilities(true);
 });
 
-  return { store, route, router, t, locale, requestedTab, tab, testing, savingProvider, loadingModels, clearingKey, confirmReset, resetting, result, verified, setupReceipts, availableModels, keys, providerDrafts, providerBaselines, defaultProvider, webLookupEnabled, memoryTidyEnabled, languageDraft, languageBaseline, remote, loadingRemote, modelRequired, languageDirty, webLookupDirty, speechAvailable, voiceSources, voiceInputChoice, audioProviderName, voiceInputNotes, voiceBrowserWarning, speechPlatform, speechRecommendationKey, displayedSpeechRate, displayedTargetLanguage, currentProviderName, selectableProviders, languages, cloneValue, prepareProviderDraft, syncLanguageDraft, syncProviderDraft, initializeDrafts, safeReturnTo, continuePracticeIfReady, saveLanguagePreferences, saveDefaultProvider, setLanguage, providerSignature, providerOverrides, rememberModelProfile, activateModel, updateActiveModelProfile, hasModelList, modelsLoaded, currentModelIsOfficial, modelLabel, invalidateProvider, providerHasChanges, savedCapabilityMatches, providerStatus, providerName, saveWebLookup, saveMemoryTidy, friendlyError, runProviderTest, saveProvider, deleteProviderKey, test, loadModels, downloadBackup, resetAllConfig, loadRemote, copyRemoteUrl, registers, variantChoices, variantName, reviewProvider, saveReviewProvider, CUSTOM_ID, customDraft, savingCustom, customError, customSaved, customDirty, syncCustomDraft, applyCustomChange, saveCustomEndpoint, removeCustomEndpoint, typeModel, usage, usageFailed, limitDraft, savingLimit, cost, loadUsage, usageTasks, usageModels, usageMonth, limitDirty, saveLimit, priceDrafts, savingPrice, savedPrice, syncPriceDraft, priceChanged, savePrice, estimates, estimateExchanges, estimateKey, loadEstimate, estimateText, regionNote, profiles, maxProfiles, newProfileName, profileBusy, profileError, renaming, renameDraft, removingProfile, profileFailure, profileName, profileLanguage, loadProfiles, addProfile, startRename, saveRename, switchProfile, removeProfile, lan, lanBusy, lanRestart, loadLan, changeLan, setLan, renewLanCode, copyText }
+  return { store, route, router, t, locale, requestedTab, selfRun, tab, testing, savingProvider, loadingModels, clearingKey, confirmReset, resetting, result, verified, setupReceipts, availableModels, keys, providerDrafts, providerBaselines, defaultProvider, webLookupEnabled, memoryTidyEnabled, languageDraft, languageBaseline, remote, loadingRemote, modelRequired, languageDirty, webLookupDirty, speechAvailable, voiceSources, voiceInputChoice, audioProviderName, voiceInputNotes, voiceBrowserWarning, speechPlatform, speechRecommendationKey, displayedSpeechRate, displayedTargetLanguage, currentProviderName, selectableProviders, languages, cloneValue, prepareProviderDraft, syncLanguageDraft, syncProviderDraft, initializeDrafts, safeReturnTo, continuePracticeIfReady, saveLanguagePreferences, saveDefaultProvider, setLanguage, providerSignature, providerOverrides, rememberModelProfile, activateModel, updateActiveModelProfile, hasModelList, modelsLoaded, currentModelIsOfficial, modelLabel, invalidateProvider, providerHasChanges, savedCapabilityMatches, providerStatus, providerName, saveWebLookup, saveMemoryTidy, friendlyError, runProviderTest, saveProvider, deleteProviderKey, test, loadModels, downloadBackup, resetAllConfig, loadRemote, copyRemoteUrl, registers, variantChoices, variantName, reviewProvider, saveReviewProvider, CUSTOM_ID, customDraft, savingCustom, customError, customSaved, customDirty, syncCustomDraft, applyCustomChange, saveCustomEndpoint, removeCustomEndpoint, typeModel, usage, usageFailed, limitDraft, savingLimit, cost, loadUsage, usageTasks, usageModels, usageMonth, limitDirty, saveLimit, priceDrafts, savingPrice, savedPrice, syncPriceDraft, priceChanged, savePrice, estimates, estimateExchanges, estimateKey, loadEstimate, estimateText, regionNote, profiles, maxProfiles, newProfileName, profileBusy, profileError, renaming, renameDraft, removingProfile, profileFailure, profileName, profileLanguage, loadProfiles, addProfile, startRename, saveRename, switchProfile, removeProfile, ownFolder, lan, lanBusy, lanRestart, loadLan, changeLan, setLan, renewLanCode, copyText }
 }

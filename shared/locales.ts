@@ -13,6 +13,22 @@ export const UI_LOCALES = [
 
 export type UiLocale = (typeof UI_LOCALES)[number]
 
+export const DEFAULT_WEB_LOCALE: UiLocale = 'en-US'
+
+export function localeSlug(locale: UiLocale) {
+  return locale.split('-')[0]
+}
+
+export function explicitUiLocale(value: unknown): UiLocale | undefined {
+  if (typeof value !== 'string') return
+  const code = value.toLowerCase()
+  return UI_LOCALES.find((locale) => locale.toLowerCase() === code || localeSlug(locale) === code)
+}
+
+export function browserUiLocale(languages: readonly string[]): UiLocale | undefined {
+  return languages.map((language) => explicitUiLocale(language.split('-')[0])).find(Boolean)
+}
+
 export const TARGET_LANGUAGES = [
   { code: 'en', name: 'English', locale: 'en-US' },
   { code: 'es', name: 'Spanish', locale: 'es-419' },

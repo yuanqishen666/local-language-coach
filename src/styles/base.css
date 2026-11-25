@@ -98,6 +98,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .skeleton { background: linear-gradient(90deg, #ebe8df, #f5f3ed, #ebe8df); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
 @keyframes shimmer { to { background-position: -200% 0; } }
 
+/* A reply told in several parts: what is narrated is set apart from what is said, and each line carries who says it. */
+.reply-told { margin: 0 0 6px; font-size: .92em; font-style: italic; line-height: 1.6; opacity: .75; }
+.reply-name { display: block; margin: 6px 0 1px; font-size: .78em; font-weight: 700; letter-spacing: .02em; opacity: .7; }
+.reply-told + .reply-name, .reply-name:first-child { margin-top: 0; }
+
 @media (max-width: 1040px) and (min-width: 821px) {
   .app-frame { grid-template-columns: 86px minmax(0, 1fr); }
   .app-frame.focus-mode { grid-template-columns: minmax(0, 1fr); }
@@ -133,3 +138,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .focus-mode .sidebar { display: none; }
   .focus-mode .main-area { min-height: 100vh; }
 }
+
+/* A destination the first-run page offers besides setting the app up. */
+.welcome-link { color: inherit; text-decoration: underline; text-underline-offset: 3px; }

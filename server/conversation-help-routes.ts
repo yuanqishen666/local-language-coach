@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify'
 import { getConfig } from './services/config.js'
-import { db, row, rows } from './services/database.js'
+import { db, perDatabase, row, rows } from './services/database.js'
 import { normalizeUiLocale } from '../shared/locales.js'
 import { difficultyProfile, replyStep, type ConversationDifficulty } from '../shared/proficiency.js'
+import { toldInParts } from '../shared/reply.js'
 import { safeJson } from './utils/json.js'
 import { normalizeConversationSetup } from './ai/context.js'
 import { hintForLine, simplifyLine } from './ai/help.js'
@@ -48,21 +49,25 @@ function levelAfter(difficulty: ConversationDifficulty, languageCode: string) {
 }
 
 export function registerConversationHelpRoutes(app: FastifyInstance) {
-  const running = new Map<string, Promise<unknown>>()
+  const running = perDatabase(() => new Map<string, Promise<unknown>>())
   /** Two presses on the same thing wait for one answer instead of paying for two. */
   function once<T>(key: string, work: () => Promise<T>): Promise<T> {
-    const current = running.get(key) as Promise<T> | undefined
+    // Shared with the same learner's own requests only: the answer is theirs.
+    const underWay = running()
+    const current = underWay.get(key) as Promise<T> | undefined
     if (current) return current
-    const task = work().finally(() => { if (running.get(key) === task) running.delete(key) })
-    running.set(key, task)
+    const task = work().finally(() => { if (underWay.get(key) === task) underWay.delete(key) })
+    underWay.set(key, task)
     return task
   }
 
   // "Say it more simply": the partner's line is written again at an easier step and takes the place of the first wording.
   app.post<{ Params: { id: string; messageId: string } }>('/api/conversations/:id/messages/:messageId/simpler', async (request) => {
     const { conversation, line } = partnerLine(request.params.id, request.params.messageId)
+    const written = safeJson<Record<string, any>>(line.meta_json, {})
     // A reply built on looked-up material carries names, figures and source marks that a rewrite could lose.
-    if (safeJson<Record<string, any>>(line.meta_json, {}).grounding) throw failure('This line cannot be rewritten.', 409, 'SIMPLER_UNAVAILABLE')
+    // One told in several parts would come back as a single line, without who says what.
+    if (written.grounding || toldInParts(written.beats)) throw failure('This line cannot be rewritten.', 409, 'SIMPLER_UNAVAILABLE')
     return once(`simpler:${line.id}`, async () => {
       const current = await getConfig()
       const learning = conversationLearning(conversation, current)

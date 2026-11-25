@@ -5,6 +5,7 @@ import Bubble from './Bubble.vue'
 import Face from './Face.vue'
 import Lookup from './Lookup.vue'
 import { useConversationPage } from '../logic/ConversationPage'
+import { aboveComposer } from '../../conversation-extras'
 
 const {
   router, t, conversation, input, sending, chat, error, lookup, sceneStarting, partnerInitial, targetLanguageCode,
@@ -79,6 +80,7 @@ watch(sending, (now) => {
       <div class="deck-in">
         <p v-if="conversation.status === 'archived'" class="deck-note">{{ t('conversation.archivedContinue') }}</p>
         <p v-if="error" class="bk-error" role="alert">{{ error }}</p>
+        <component :is="extra" v-for="(extra, at) in aboveComposer" :key="at" :conversation="conversation" />
         <div class="write" :class="{ busy: sending }">
           <label class="sr" for="conversation-message">{{ t('conversation.openPlaceholder') }}</label>
           <textarea

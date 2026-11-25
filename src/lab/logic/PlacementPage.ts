@@ -12,6 +12,7 @@ import type { PlacementProgress, PlacementResult } from '../../../shared/placeme
 import { modelSettingsLocation, needsModelConfiguration } from '../../model-access'
 import { levelOverview, loadLevel, markLevelPrompted, stepName, updateLevel } from '../../level'
 import { formatCost, type Spend } from '../../usage'
+import { runsForOneself } from '../../install'
 
 export function usePlacementPage() {
 const store = useAppStore()
@@ -46,6 +47,7 @@ const result = ref<PlacementResult | null>(null)
 // What the model requests of this test came to.
 const spend = ref<Spend | null>(null)
 async function loadSpend(sessionId: string) {
+  if (!runsForOneself()) return
   try {
     spend.value = await api.get<Spend>(`/usage/placement/${encodeURIComponent(sessionId)}`)
   } catch {

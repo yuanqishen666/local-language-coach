@@ -369,6 +369,31 @@ test('the review setting must be a boolean', async () => {
   assert.ok(bad.statusCode >= 400, bad.body)
 })
 
+test('two learners with a database each, asking for a story at the same moment, each get their own', async () => {
+  await fresh()
+  const { AsyncLocalStorage } = await import('node:async_hooks')
+  const { chooseDatabaseWith, openDatabase } = await import('./services/database.js')
+  const inHand = new AsyncLocalStorage<ReturnType<typeof openDatabase>>()
+  const learners = ['one', 'two'].map((name) => ({ name, database: openDatabase(path.join(dataDir, `learner-${name}.db`)) }))
+  const terms = ['stroll', 'umbrella', 'broth']
+  chooseDatabaseWith(() => inHand.getStore())
+  try {
+    for (const { name, database } of learners) await inHand.run(database, async () => { for (const term of terms) await saveWord(term, `${term} of ${name}`) })
+    const stories = await Promise.all(learners.map(({ database }) => inHand.run(database, async () => {
+      const response = await app.inject({ method: 'POST', url: '/api/stories', payload: { interfaceLocale: 'zh-CN' } })
+      assert.equal(response.statusCode, 200, response.body)
+      const { story } = response.json()
+      assert.equal((await app.inject({ method: 'GET', url: `/api/stories/${story.id}` })).statusCode, 200, 'the story is kept where the one who asked for it keeps theirs')
+      return story
+    })))
+    stories.forEach((story, index) => assert.deepEqual(story.words.map((word: any) => word.meaning), terms.map((term) => `${term} of ${learners[index].name}`)))
+    assert.equal(stage('story').length, 2)
+  } finally {
+    chooseDatabaseWith(() => undefined)
+    for (const { database } of learners) database.close()
+  }
+})
+
 test('a story needs a few saved words', async () => {
   await fresh()
   await saveWord('stroll', '散步')

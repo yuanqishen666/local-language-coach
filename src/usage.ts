@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { api } from './api'
+import { runsForOneself } from './install'
 
 /** What a set of model requests came to. `cost` leaves out requests no price is known for. */
 export interface Spend { cost: number; requests: number; inputTokens: number; outputTokens: number; unpriced: number; estimated: number }
@@ -42,6 +43,7 @@ const CHECK_EVERY = 60_000
 let checkedAt = 0
 
 export async function checkLimit(force = false) {
+  if (!runsForOneself()) return false
   if (!force && Date.now() - checkedAt < CHECK_EVERY) return overLimit.value
   checkedAt = Date.now()
   try {

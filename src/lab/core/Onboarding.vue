@@ -3,6 +3,7 @@ import { inject, type Component } from 'vue'
 import { LOCALE_META, TARGET_LANGUAGES, UI_LOCALES, displayTargetLanguage } from '../../../shared/locales'
 import Icon from '../kit/Icon.vue'
 import { useOnboardingPage } from '../logic/OnboardingPage'
+import { shellWelcome } from '../useShell'
 
 const { t, step, saving, submitError, levels, draft, chooseLanguage, finish } = useOnboardingPage()
 const mascot = inject<Component | null>('labMascot', null)
@@ -42,6 +43,7 @@ const mascot = inject<Component | null>('labMascot', null)
 
       <footer>
         <p class="c-private"><Icon name="lock" :size="14" :weight="2" />{{ t('onboarding.privacy') }}</p>
+        <p v-for="item in shellWelcome" :key="item.to" class="c-private"><RouterLink :to="item.to" class="welcome-link">{{ t(item.label) }}</RouterLink></p>
         <p v-if="submitError" class="c-error" role="alert">{{ submitError }}</p>
         <div class="c-onboard-nav">
           <button v-if="step > 1" type="button" class="c-btn big" :disabled="saving" @click="step--"><Icon name="back" :size="17" :weight="2.2" />{{ t('common.back') }}</button>

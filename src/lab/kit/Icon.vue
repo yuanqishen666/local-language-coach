@@ -1,5 +1,5 @@
 <script setup lang="ts">
-defineProps<{ name: keyof typeof paths; size?: number; weight?: number }>()
+defineProps<{ name: IconName; size?: number; weight?: number }>()
 </script>
 
 <script lang="ts">
@@ -50,6 +50,8 @@ const paths = {
   people: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m7-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8',
   help: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM9.6 9.3a2.5 2.5 0 0 1 4.8.8c0 1.7-2.4 2.2-2.4 3.7m0 3.2h.01',
 } as const
+
+export type IconName = keyof typeof paths
 </script>
 
 <template>

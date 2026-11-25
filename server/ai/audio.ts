@@ -90,7 +90,7 @@ async function openAiTranscribes(key: string, base: string, wav: Uint8Array, lan
   let refused: unknown
   for (const model of OPENAI_TRANSCRIBERS) {
     const form = new FormData()
-    form.append('file', new Blob([wav], { type: 'audio/wav' }), 'speech.wav')
+    form.append('file', new Blob([wav as Uint8Array<ArrayBuffer>], { type: 'audio/wav' }), 'speech.wav')
     form.append('model', model)
     form.append('language', languageCode.split(/[-_]/u)[0])
     form.append('response_format', 'json')

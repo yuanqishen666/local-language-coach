@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, provide, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import '../daily/daily.css'
 import '../daily/pages.css'
 import './theme.css'
@@ -8,7 +9,7 @@ import LabSwitch from '../kit/Switch.vue'
 import Face from '../blocks/Face.vue'
 import { shellFoot, shellMain, shellNav, useShell } from '../useShell'
 
-const { store, route, t, focus, plain, reviewDue, languageCode, language, level, navOn, overLimit } = useShell()
+const { store, route, t, locale, focus, plain, reviewDue, languageCode, language, level, navOn, overLimit } = useShell()
 provide('labReviewDue', reviewDue)
 
 // Phone: the four things done most, the rest behind “more”.
@@ -31,9 +32,9 @@ watch(() => route.path, () => { menu.value = false })
       </nav>
       <nav class="y-nav foot">
         <RouterLink to="/settings" class="bk-lang"><b>{{ languageCode.toUpperCase() }}</b><span>{{ language }}</span><small v-if="level">{{ level }}</small></RouterLink>
-        <RouterLink v-for="item in shellFoot" :key="item.to" :to="overLimit ? '/settings?tab=usage' : item.to" class="y-item solo" :class="{ on: navOn(item.to) }" :aria-current="navOn(item.to) ? 'page' : undefined">
-          <Icon :name="item.icon" :size="17" :weight="2.1" /><span>{{ t(item.label) }}</span><i v-if="overLimit" class="y-nav-dot" role="img" :aria-label="t('usage.reached')" :title="t('usage.reached')"></i>
-        </RouterLink>
+        <component :is="item.href ? 'a' : RouterLink" v-for="item in shellFoot" :key="item.to" v-bind="item.href ? { href: item.href(locale) } : { to: overLimit && item.to === '/settings' ? '/settings?tab=usage' : item.to }" class="y-item solo" :class="{ on: navOn(item.to) }" :aria-current="navOn(item.to) ? 'page' : undefined" :data-qs-id="item.to === '/privacy' ? 'qs-privacy-nav' : undefined">
+          <Icon :name="item.icon" :size="17" :weight="2.1" /><span :data-content-repeat-ok="item.to === '/privacy' ? 'orientation' : undefined">{{ t(item.label) }}</span><i v-if="overLimit && item.to === '/settings'" class="y-nav-dot" role="img" :aria-label="t('usage.reached')" :title="t('usage.reached')"></i>
+        </component>
       </nav>
     </aside>
 
@@ -54,7 +55,7 @@ watch(() => route.path, () => { menu.value = false })
       <Transition name="y-veil"><div v-if="menu" class="y-veil clear" @click="menu = false"></div></Transition>
       <Transition name="y-more">
         <div v-if="menu" class="y-more-menu" role="menu">
-          <RouterLink v-for="item in rest" :key="item.to" :to="item.to" role="menuitem" :class="{ on: navOn(item.to) }"><Icon :name="item.icon" :size="17" :weight="2.1" />{{ t(item.label) }}</RouterLink>
+          <component :is="item.href ? 'a' : RouterLink" v-for="item in rest" :key="item.to" v-bind="item.href ? { href: item.href(locale) } : { to: item.to }" role="menuitem" :class="{ on: navOn(item.to) }"><Icon :name="item.icon" :size="17" :weight="2.1" />{{ t(item.label) }}</component>
         </div>
       </Transition>
     </template>

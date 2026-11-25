@@ -1,23 +1,25 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '../stores/app'
 import AppIcon from '../components/AppIcon.vue'
 import { displayTargetLanguage, LOCALE_META, TARGET_LANGUAGES, UI_LOCALES, type UiLocale } from '../../shared/locales'
 import { CEFR_LEVELS, stepParts } from '../../shared/proficiency'
 import { loadLevel, updateLevel } from '../level'
+import { onboardingDestination } from '../router'
 
 const store = useAppStore(); const router = useRouter(); const { t, locale } = useI18n()
+const route = useRoute()
 const step = ref(1)
 const saving = ref(false)
 const submitError = ref('')
 const levels = CEFR_LEVELS.map((level) => ({ id: level as string, key: `onboarding.level${level}` }))
 // The level is either measured or chosen. Measuring is the default: 'test' stands for taking the placement test.
 const TEST = 'test'
-const draft = ref({ uiLocale: 'zh-CN' as UiLocale, language: 'English', code: 'en', level: TEST })
+const draft = ref({ uiLocale: locale.value as UiLocale, language: 'English', code: 'en', level: TEST })
 onMounted(() => {
-  if (store.settings) draft.value = { uiLocale: store.settings.ui.locale, language: store.settings.learning.targetLanguage, code: store.settings.learning.targetLanguageCode, level: TEST }
+  if (store.settings) draft.value = { uiLocale: store.interfaceLanguage ?? store.settings.ui.locale, language: store.settings.learning.targetLanguage, code: store.settings.learning.targetLanguageCode, level: TEST }
   locale.value = draft.value.uiLocale
 })
 watch(() => draft.value.uiLocale, (value) => { locale.value = value })
@@ -40,10 +42,11 @@ async function finish() {
     providers: store.settings.providers.map((provider) => ({ ...provider })),
   }
   try {
-    await store.save(next)
+    const destination = onboardingDestination(router, route.query.returnTo)
+    await store.save(next, true)
     locale.value = draft.value.uiLocale
     if (draft.value.level === TEST) {
-      await router.replace('/placement')
+      await router.replace({ path: '/placement', query: destination === '/' ? {} : { from: destination } })
       return
     }
     try {
@@ -53,7 +56,7 @@ async function finish() {
     } catch {
       // The level is also in the settings just saved, which conversations fall back to.
     }
-    await router.replace('/')
+    await router.replace(destination)
   } catch {
     submitError.value = t('onboarding.saveError')
   } finally {

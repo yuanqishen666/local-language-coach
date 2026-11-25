@@ -5,6 +5,7 @@ import Lookup from './Lookup.vue'
 import Turn from './Turn.vue'
 import { vTip } from './tip'
 import { useConversationPage } from '../logic/ConversationPage'
+import { aboveComposer } from '../../conversation-extras'
 
 const {
   router, t, conversation, input, sending, chat, error, lookup, sceneStarting, partnerInitial, targetLanguageCode,
@@ -79,6 +80,7 @@ watch(input, async () => {
         <div class="c-deck-in">
           <p v-if="conversation.status === 'archived'" class="c-deck-note">{{ t('conversation.archivedContinue') }}</p>
           <p v-if="error" class="c-error" role="alert">{{ error }}</p>
+          <component :is="extra" v-for="(extra, at) in aboveComposer" :key="at" :conversation="conversation" />
           <div class="c-write" :class="{ busy: sending }">
             <label class="c-sr" for="conversation-message">{{ t('conversation.openPlaceholder') }}</label>
             <textarea

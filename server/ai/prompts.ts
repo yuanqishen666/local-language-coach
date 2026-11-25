@@ -174,6 +174,9 @@ export function memoryAnalysisSystem(config: AppConfig, memories: Array<Record<s
   ].join('\n')
 }
 
+/** How a text both have just read is talked about. */
+export const SHARED_MATERIAL_RULE = 'You and the learner have both just read it. Talk about it the way two people who read the same thing do: react to it, give a view, ask what they made of it. Do not retell it, quiz them on it, or treat it as a lesson; when the conversation moves away from it, follow.'
+
 export function coachSystem(
   config: AppConfig,
   setup: ConversationSetup | null,
@@ -224,7 +227,7 @@ export function coachSystem(
     'Authoritative semantic lookup decision for the latest learner turn: ' + JSON.stringify(lookupDecision) + '. Copy this decision into lookup exactly; do not reclassify it while writing the conversational reply.',
     'Authoritative pre-reply analysis: ' + JSON.stringify(turnAnalysis) + '. Use the corrected intent when replying and copy its reconstruction, corrections, and userFacts exactly. Do not silently discard them.',
     ...(material
-      ? ['Shared material: ' + JSON.stringify(material) + '. You and the learner have both just read it. Talk about it the way two people who read the same thing do: react to it, give a view, ask what they made of it. Do not retell it, quiz them on it, or treat it as a lesson; when the conversation moves away from it, follow.']
+      ? ['Shared material: ' + JSON.stringify(material) + '. ' + SHARED_MATERIAL_RULE]
       : []),
     ...(reviewWords.length
       ? ['Saved words: ' + JSON.stringify(reviewWords) + '. The learner saved these and has not used them for a while. When the topic allows, leave an opening where one of them is the natural thing for the learner to say: a question or remark whose answer calls for it. Prefer leaving the word for them; saying it yourself once is fine when that is what a person would do. Never ask them to use a word, never mention saved words, review, or practice, keep to the question budget, and drop it when it does not fit: the conversation comes first.']

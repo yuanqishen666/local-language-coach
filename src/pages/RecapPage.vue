@@ -11,6 +11,7 @@ import { isErrorCategory } from '../../shared/memory'
 import { RECAP_MIN_TURNS, type Practice, type Recap } from '../../shared/recap'
 import type { ProficiencyChange } from '../../shared/proficiency'
 import { formatCost, type Spend } from '../usage'
+import { runsForOneself } from '../install'
 
 type Change = Pick<ProficiencyChange, 'kind' | 'fromStep' | 'toStep'>
 
@@ -35,6 +36,7 @@ let version = 0
 // What the model requests of this conversation came to, the recap included.
 const spend = ref<Spend | null>(null)
 async function loadSpend() {
+  if (!runsForOneself()) return
   try {
     spend.value = await api.get<Spend>(`/usage/conversations/${encodeURIComponent(conversationId.value)}`)
   } catch {

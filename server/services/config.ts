@@ -228,7 +228,7 @@ function ensureProviderTransactionRecovered() {
   return recoveryPromise
 }
 
-export async function getConfig(): Promise<AppConfig> {
+async function configInFile(): Promise<AppConfig> {
   await ensureRoot()
   await ensureProviderTransactionRecovered()
   let source: string
@@ -250,7 +250,7 @@ export async function getConfig(): Promise<AppConfig> {
   return validated
 }
 
-export async function saveConfig(config: AppConfig) {
+async function saveConfigInFile(config: AppConfig) {
   const validated = validateConfig(config)
   await ensureProviderTransactionRecovered()
   return serializeWrite(async () => {
@@ -262,7 +262,7 @@ export async function saveConfig(config: AppConfig) {
 /** Persist the provider configuration and its secrets as one recoverable
  * transaction. A crash between the two atomic replacements leaves the journal
  * behind; the next read completes the same transaction before returning data. */
-export async function saveConfigAndSecrets(config: AppConfig, secrets: Record<string, string>) {
+async function saveConfigAndSecretsInFiles(config: AppConfig, secrets: Record<string, string>) {
   const validatedConfig = validateConfig(config)
   const validatedSecrets = validateSecrets(secrets)
   await ensureProviderTransactionRecovered()
@@ -299,7 +299,7 @@ export async function resetConfig(options: { clearSecrets?: boolean } = {}) {
   return next
 }
 
-export async function getSecrets(): Promise<Record<string, string>> {
+async function secretsInFile(): Promise<Record<string, string>> {
   await ensureRoot()
   await ensureProviderTransactionRecovered()
   let source: string
@@ -317,14 +317,63 @@ export async function getSecrets(): Promise<Record<string, string>> {
   }
 }
 
-export async function setSecret(key: string, value: string) {
+async function setSecretInFile(key: string, value: string) {
   await ensureProviderTransactionRecovered()
   await serializeWrite(async () => {
-    const secrets = await getSecrets()
+    const secrets = await secretsInFile()
     if (value) secrets[key] = value
     else delete secrets[key]
     await atomicJson(secretsPath, secrets)
   })
+}
+
+/** Where the settings and the keys are kept. */
+export interface SettingsStore {
+  config(): Promise<AppConfig>
+  saveConfig(config: AppConfig): Promise<AppConfig>
+  /** Both or neither. */
+  saveConfigAndSecrets(config: AppConfig, secrets: Record<string, string>): Promise<AppConfig>
+  secrets(): Promise<Record<string, string>>
+  setSecret(key: string, value: string): Promise<void>
+}
+
+const inFiles: SettingsStore = {
+  config: configInFile,
+  saveConfig: saveConfigInFile,
+  saveConfigAndSecrets: saveConfigAndSecretsInFiles,
+  secrets: secretsInFile,
+  setSecret: setSecretInFile,
+}
+let chosenStore: () => SettingsStore | undefined = () => undefined
+const store = () => chosenStore() ?? inFiles
+
+/**
+ * Lets the program hosting the routes keep the settings and keys of the work in hand somewhere other than
+ * this data folder. It is asked at every read and write; answering with nothing means the files here.
+ */
+export function keepSettingsWith(choose: () => SettingsStore | undefined) {
+  chosenStore = choose
+}
+
+export async function getConfig(): Promise<AppConfig> {
+  return store().config()
+}
+
+export async function saveConfig(config: AppConfig) {
+  return store().saveConfig(validateConfig(config))
+}
+
+/** Persist the provider configuration and its secrets together. */
+export async function saveConfigAndSecrets(config: AppConfig, secrets: Record<string, string>) {
+  return store().saveConfigAndSecrets(validateConfig(config), validateSecrets(secrets))
+}
+
+export async function getSecrets(): Promise<Record<string, string>> {
+  return store().secrets()
+}
+
+export async function setSecret(key: string, value: string) {
+  return store().setSecret(key, value)
 }
 
 export function getByPath(object: unknown, dotted: string): unknown {

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { getConfig, getSecrets } from '../services/config.js'
 import type { ProviderConfig, ProviderKind } from '../types.js'
-import { meterReply } from '../ai/usage-meter.js'
+import { admitUsage, meterReply } from '../ai/usage-meter.js'
 import type { LookupCitation, LookupItem, LookupPresentation, ProviderLookupResult } from './types.js'
 
 const lookupProviders = new Set<ProviderKind>(['openai', 'anthropic', 'gemini', 'deepseek', 'kimi'])
@@ -36,6 +36,7 @@ function toolPath(provider: ProviderConfig, tool: 'search' | 'fetch') {
 }
 
 async function requestJson(url: string, init: RequestInit, timeoutMs: number) {
+  await admitUsage()
   const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
   const value = await response.text()
   if (!response.ok) throw new Error(`LOOKUP_HTTP_${response.status}`)

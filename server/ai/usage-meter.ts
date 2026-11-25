@@ -37,6 +37,19 @@ export function setUsageSink(next?: Sink) {
   sink = next
 }
 
+type Gate = (scope: UsageScope) => void | Promise<void>
+let gate: Gate | undefined
+
+/** Lets whoever keeps the books turn a request away before it is sent, by throwing what the learner is to be told. */
+export function setUsageGate(next?: Gate) {
+  gate = next
+}
+
+/** Asked before each request to a model service. */
+export async function admitUsage() {
+  await gate?.(currentUsageScope())
+}
+
 /** Everything started inside `run`, including work that outlives it, is booked to `scope`. */
 export function withUsageScope<T>(scope: UsageScope, run: () => T): T {
   return scopes.run(scope, run)
