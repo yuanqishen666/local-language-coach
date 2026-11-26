@@ -1,5 +1,5 @@
 // Generated from src/pages/ImportPage.vue by src/lab/logic/generate.mjs. Do not edit; change the page and regenerate.
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ApiError, api } from '../../api'
@@ -26,6 +26,7 @@ const saving = ref('')
 const rereading = ref('')
 const levelName = computed(() => (content.value ? stepName(content.value.step) : ''))
 let version = 0
+let rereadVersion = 0
 
 function failureText(value: unknown) {
   const code = value instanceof ApiError ? value.code : ''
@@ -71,7 +72,10 @@ async function read() {
   error.value = ''
   try {
     const result = await api.post<{ content: ImportedContent }>('/imports', { text, interfaceLocale: String(locale.value) })
-    if (current !== version) return
+    if (current !== version) {
+      void api.delete(`/imports/${encodeURIComponent(result.content.id)}`).catch(() => undefined)
+      return
+    }
     content.value = result.content
     draft.value = ''
     state.value = 'ready'
@@ -84,19 +88,41 @@ async function read() {
   }
 }
 
+function cancelRead() {
+  if (state.value !== 'reading') return
+  version += 1
+  state.value = 'list'
+  error.value = ''
+}
+
 /** Reads a saved address again, for a page whose content changes. */
 async function reread(id: string) {
   if (rereading.value) return
+  const current = ++rereadVersion
   rereading.value = id
   error.value = ''
   try {
     const result = await api.post<{ content: ImportedContent }>(`/imports/${encodeURIComponent(id)}/refresh`, { interfaceLocale: String(locale.value) })
+    if (current !== rereadVersion) {
+      void api.delete(`/imports/${encodeURIComponent(result.content.id)}`).catch(() => undefined)
+      return
+    }
     content.value = result.content
     await router.push(`/start/import/${encodeURIComponent(result.content.id)}`)
   } catch (value) {
+    if (current !== rereadVersion) return
     if (needsModelConfiguration(value)) { await guideToModelSettings(router, route.fullPath); return }
     error.value = failureText(value)
-  } finally { rereading.value = '' }
+  } finally {
+    if (current === rereadVersion) rereading.value = ''
+  }
+}
+
+function cancelReread() {
+  if (!rereading.value) return
+  rereadVersion += 1
+  rereading.value = ''
+  error.value = ''
 }
 
 async function remove(id: string) {
@@ -148,8 +174,12 @@ function siteOf(url: string | null) {
 }
 
 onMounted(open)
+onUnmounted(() => {
+  version += 1
+  rereadVersion += 1
+})
 watch(contentId, () => { void open() })
 watch(locale, () => { content.value = null; void open() })
 
-  return { route, router, t, locale, contentId, content, items, draft, state, error, starting, saving, rereading, levelName, failureText, open, read, reread, remove, talk, keepWord, formatDate, siteOf }
+  return { route, router, t, locale, contentId, content, items, draft, state, error, starting, saving, rereading, levelName, failureText, open, read, cancelRead, reread, cancelReread, remove, talk, keepWord, formatDate, siteOf }
 }

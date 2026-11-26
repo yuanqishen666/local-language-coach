@@ -9,10 +9,11 @@ import { aboveComposer } from '../../conversation-extras'
 import { composerKeys, keyboardPlatform } from '../../platform'
 
 const {
-  router, t, conversation, input, sending, chat, error, lookup, sceneStarting, partnerInitial, targetLanguageCode,
+  router, t, conversation, input, sending, chat, newReplyAvailable, error, lookup, sceneStarting, partnerInitial, targetLanguageCode,
   setupMatchesLocale, conversationTitle, send, openLookup, saveMemory, dismissMemory, undoMemory, conversationMemories,
   forgetConversationMemory, keepConversationMemory, formatDate, handleComposerKeydown,
   handleCompositionStart, handleCompositionEnd, feedbackFor, replayScene, toggleSceneSaved, customizeScene,
+  handleConversationScroll, showLatestReply,
   levelLine, canRecap, levelMoved, openRecap, exportMarkdown,
   voiceNote, spokenLine, micOn, micWriting, toggleMic, pressMic, releaseMic, leaveMic,
   call, callNote, callHeard, callWriting, startCall, endCall, pauseCall, callListen, finishCallTurn, typeInstead,
@@ -69,7 +70,7 @@ watch(input, async () => {
       </template>
     </header>
 
-    <div ref="chat" class="y-conv-scroll" :aria-busy="sending || sceneStarting">
+    <div ref="chat" class="y-conv-scroll" :class="{ 'has-new-reply': newReplyAvailable }" :aria-busy="sending || sceneStarting" @scroll.passive="handleConversationScroll">
       <div class="y-lane">
         <section v-if="conversation.setup && setupMatchesLocale" class="y-scene y-fold" :class="{ open: sceneOpen }">
           <button type="button" class="y-scene-head" :aria-expanded="sceneOpen" @click="sceneOpen = !sceneOpen">
@@ -115,6 +116,7 @@ watch(input, async () => {
     </div>
 
     <div class="y-deck">
+      <Transition name="y-new-reply"><button v-if="newReplyAvailable" type="button" class="y-btn sm y-new-reply" data-qs-id="qs-new-reply" aria-live="polite" @click="showLatestReply">{{ t('conversation.newReply') }} <span aria-hidden="true">↓</span></button></Transition>
       <div class="y-lane">
         <div class="y-deck-in">
           <p v-if="conversation.status === 'archived'" class="y-deck-note">{{ t('conversation.archivedContinue') }}</p>
@@ -139,7 +141,7 @@ watch(input, async () => {
             <p v-if="callNote" class="y-keys y-voice-line warn" role="alert">{{ callNote }}</p>
           </template>
           <template v-else>
-          <div class="y-write" :class="{ busy: sending, heard: micOn }">
+          <div class="y-write" :class="{ heard: micOn }">
             <label class="y-sr" for="conversation-message">{{ t('conversation.openPlaceholder') }}</label>
             <textarea
               id="conversation-message"
@@ -149,7 +151,6 @@ watch(input, async () => {
               rows="1"
               autocomplete="off"
               aria-describedby="conversation-keys"
-              :disabled="sending"
               :readonly="micOn"
               @compositionstart="handleCompositionStart"
               @compositionend="handleCompositionEnd"

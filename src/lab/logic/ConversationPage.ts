@@ -19,6 +19,7 @@ import { RECAP_MIN_TURNS } from '../../../shared/recap'
 import { conversationMarkdown, downloadText, fileName } from '../../export-files'
 import { clearConversationTurn, readConversationTurn, saveConversationTurn, updateConversationTurnPhase, type StoredConversationTurn } from '../../conversation-turn-storage'
 import { conversationTurnRecoveryAction, conversationTurnStatus, type ConversationTurnStatusResponse } from '../../conversation-turn-recovery'
+import { isNearConversationEnd, restoreFailedComposer } from '../../conversation-scroll'
 
 export function useConversationPage() {
 const route = useRoute()
@@ -30,6 +31,7 @@ const input = ref('')
 const sending = ref(false)
 const compositionActive = ref(false)
 const chat = ref<HTMLElement | null>(null)
+const newReplyAvailable = ref(false)
 const error = ref('')
 const lookup = ref({ open: false, term: '', sentence: '' })
 const sceneStarting = ref(false)
@@ -157,6 +159,7 @@ async function openConversation(conversationId: string, options: { preserveInput
   if (!options.preserveInput) input.value = ''
   error.value = ''
   sending.value = false
+  newReplyAvailable.value = false
   activeSubmissionId = ''
   if (openedConversationId !== conversationId) {
     openedConversationId = conversationId
@@ -177,20 +180,43 @@ async function loadConversationMemories(conversationId = String(route.params.id)
   }
 }
 
-async function load(conversationId = String(route.params.id)) {
+async function load(conversationId = String(route.params.id), options: { preserveScroll?: boolean } = {}) {
   const version = ++loadVersion
   const requestedLocale = String(locale.value)
+  const previousScrollTop = chat.value?.scrollTop ?? 0
   const loaded = await api.get<Conversation>(`/conversations/${encodeURIComponent(conversationId)}?interfaceLocale=${encodeURIComponent(requestedLocale)}`)
   if (version !== loadVersion || requestedLocale !== String(locale.value) || !isCurrentConversation(conversationId)) return
   conversation.value = loaded
-  await scrollEnd()
+  if (options.preserveScroll) {
+    await nextTick()
+    if (chat.value) chat.value.scrollTop = previousScrollTop
+  } else await scrollEnd()
   return loaded
 }
 
-async function scrollEnd() {
-  await nextTick()
-  if (chat.value) chat.value.scrollTop = chat.value.scrollHeight
+function conversationIsNearEnd() {
+  return !chat.value || isNearConversationEnd(chat.value)
 }
+
+function handleConversationScroll() {
+  if (conversationIsNearEnd()) newReplyAvailable.value = false
+}
+
+function reducesMotion() {
+  return typeof globalThis.matchMedia === 'function' && globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+async function scrollEnd(smooth = false) {
+  await nextTick()
+  const element = chat.value
+  if (!element) return
+  if (smooth && !reducesMotion() && typeof element.scrollTo === 'function') {
+    element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' })
+  } else element.scrollTop = element.scrollHeight
+  newReplyAvailable.value = false
+}
+
+function showLatestReply() { void scrollEnd(true) }
 
 function newClientMessageId() {
   return globalThis.crypto?.randomUUID?.() || `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -218,8 +244,8 @@ function finishSubmission(turn: StoredConversationTurn) {
 async function completeStoredTurn(turn: StoredConversationTurn, result?: TurnResult, optimisticTurn?: OptimisticTurn) {
   clearConversationTurn(sessionStorage, turn.conversationId, turn.clientMessageId)
   if (!isCurrentConversation(turn.conversationId)) return
-  input.value = ''
   error.value = ''
+  const followReply = conversationIsNearEnd()
   if (result && optimisticTurn && conversation.value?.id === turn.conversationId) {
     completeOptimisticTurn(conversation.value.messages, {
       localId: optimisticTurn.localId,
@@ -228,9 +254,14 @@ async function completeStoredTurn(turn: StoredConversationTurn, result?: TurnRes
     conversation.value.status = 'active'
     if (result.level) levelMoved(result.level)
     replyArrived(result.assistantMessage)
-    await scrollEnd().catch(() => undefined)
+    if (followReply) await scrollEnd(true).catch(() => undefined)
+    else {
+      await nextTick()
+      newReplyAvailable.value = true
+    }
   } else {
-    await load(turn.conversationId).catch(() => undefined)
+    await load(turn.conversationId, { preserveScroll: !followReply }).catch(() => undefined)
+    if (!followReply) newReplyAvailable.value = true
   }
   turnsThisVisit += 1
   void loadConversationMemories(turn.conversationId)
@@ -240,7 +271,7 @@ async function completeStoredTurn(turn: StoredConversationTurn, result?: TurnRes
 async function restoreStoredTurn(turn: StoredConversationTurn, value: unknown, optimisticTurn?: OptimisticTurn) {
   updateConversationTurnPhase(sessionStorage, turn, 'retryable')
   if (!isCurrentConversation(turn.conversationId)) return
-  input.value = turn.content
+  input.value = restoreFailedComposer(turn.content, input.value)
   if (optimisticTurn) failOptimisticTurn(optimisticTurn.message)
   if (needsModelConfiguration(value)) await guideToModelSettings(router, route.fullPath)
   else error.value = turnErrorMessage(value)
@@ -699,5 +730,5 @@ function leaveVoice() {
   spoken.value = null
 }
 
-  return { route, router, store, t, locale, conversation, input, sending, compositionActive, chat, error, lookup, sceneStarting, conversationMemories, partnerInitial, targetLanguageCode, setupMatchesLocale, conversationTitle, levelLine, learnerTurns, canRecap, levelMoved, exportMarkdown, openRecap, hasLearningRailContent, tidyUp, isCurrentConversation, openConversation, loadConversationMemories, load, scrollEnd, newClientMessageId, readStoredTurn, serverTurnStatus, finishSubmission, completeStoredTurn, restoreStoredTurn, reconcileSubmissionError, submitStoredTurn, reconcileStoredTurn, turnErrorMessage, send, openLookup, lookupText, dropCandidate, saveMemory, dismissMemory, undoMemory, forgetConversationMemory, keepConversationMemory, formatDate, handleComposerKeydown, handleCompositionStart, handleCompositionEnd, feedbackFor, replayScene, toggleSceneSaved, customizeScene, HOLD_MS, voiceNote, spoken, micOn, micWriting, spokenLine, voiceFailed, startMic, toggleMic, pressMic, releaseMic, leaveMic, call, callNote, callHeard, callWriting, callListen, callSay, callNext, replyArrived, startCall, endCall, pauseCall, finishCallTurn, typeInstead, leaveVoice }
+  return { route, router, store, t, locale, conversation, input, sending, compositionActive, chat, newReplyAvailable, error, lookup, sceneStarting, conversationMemories, partnerInitial, targetLanguageCode, setupMatchesLocale, conversationTitle, levelLine, learnerTurns, canRecap, levelMoved, exportMarkdown, openRecap, hasLearningRailContent, tidyUp, isCurrentConversation, openConversation, loadConversationMemories, load, conversationIsNearEnd, handleConversationScroll, reducesMotion, scrollEnd, showLatestReply, newClientMessageId, readStoredTurn, serverTurnStatus, finishSubmission, completeStoredTurn, restoreStoredTurn, reconcileSubmissionError, submitStoredTurn, reconcileStoredTurn, turnErrorMessage, send, openLookup, lookupText, dropCandidate, saveMemory, dismissMemory, undoMemory, forgetConversationMemory, keepConversationMemory, formatDate, handleComposerKeydown, handleCompositionStart, handleCompositionEnd, feedbackFor, replayScene, toggleSceneSaved, customizeScene, HOLD_MS, voiceNote, spoken, micOn, micWriting, spokenLine, voiceFailed, startMic, toggleMic, pressMic, releaseMic, leaveMic, call, callNote, callHeard, callWriting, callListen, callSay, callNext, replyArrived, startCall, endCall, pauseCall, finishCallTurn, typeInstead, leaveVoice }
 }

@@ -15,6 +15,11 @@ const pendingDelete = ref<ConversationListItem | null>(null)
 const deleting = ref(false)
 const loadError = ref('')
 
+interface RemovedConversation {
+  item: ConversationListItem
+  index: number
+}
+
 async function load() {
   const requestedLocale = String(locale.value)
   loadError.value = ''
@@ -51,16 +56,36 @@ async function toggleArchive(item: ConversationListItem) {
   } catch { store.notify(t('common.operationFailed')) }
 }
 
-async function removeConversation() {
-  if (!pendingDelete.value || deleting.value) return
-  deleting.value = true
+function restoreConversation(record: RemovedConversation, announce = true) {
+  if (!items.value.some((item) => item.id === record.item.id)) {
+    items.value.splice(Math.min(record.index, items.value.length), 0, record.item)
+  }
+  if (announce) store.notify(t('history.restoredToast'))
+}
+
+async function commitConversationRemoval(record: RemovedConversation) {
   try {
-    await api.delete(`/conversations/${pendingDelete.value.id}`)
-    items.value = items.value.filter((item) => item.id !== pendingDelete.value?.id)
-    pendingDelete.value = null
-    store.notify(t('history.deleted'))
-  } catch { store.notify(t('history.deleteError')) }
-  finally { deleting.value = false }
+    await api.delete(`/conversations/${record.item.id}`)
+  } catch {
+    restoreConversation(record, false)
+    store.notify(t('history.deleteError'))
+  }
+}
+
+function removeConversation() {
+  const item = pendingDelete.value
+  if (!item || deleting.value) return
+  const index = items.value.findIndex((candidate) => candidate.id === item.id)
+  if (index < 0) { pendingDelete.value = null; return }
+  const record = { item, index }
+  items.value.splice(index, 1)
+  pendingDelete.value = null
+  store.notify(t('history.deleted'), {
+    actionLabel: t('conversation.undoRemember'),
+    duration: 6000,
+    onAction: () => restoreConversation(record),
+    onExpire: () => { void commitConversationRemoval(record) },
+  })
 }
 
 function day(value: string) { return new Intl.DateTimeFormat(String(locale.value), { day: 'numeric' }).format(new Date(value)) }

@@ -9,7 +9,7 @@ import { useImportPage } from '../logic/ImportPage'
 
 const {
   t, content, items, draft, state, error, starting, saving, rereading, levelName,
-  read, reread, remove, talk, keepWord, formatDate, siteOf,
+  read, cancelRead, reread, cancelReread, remove, talk, keepWord, formatDate, siteOf,
 } = useImportPage()
 
 // Presentation only: deleting asks once more, in the row itself.
@@ -23,7 +23,7 @@ const pending = ref('')
       <h1>{{ t('import.title') }}</h1>
     </header>
 
-    <p v-if="state === 'loading' || state === 'reading' || rereading" class="y-recap-wait" role="status"><span class="y-dots" aria-hidden="true"><i></i><i></i><i></i></span><template v-if="state === 'reading' || rereading">{{ t('import.reading') }}</template></p>
+    <p v-if="state === 'loading'" class="y-recap-wait" role="status"><span class="y-dots" aria-hidden="true"><i></i><i></i><i></i></span></p>
 
     <template v-else>
       <p v-if="error" class="y-error" role="alert">{{ error }}</p>
@@ -40,8 +40,14 @@ const pending = ref('')
             <span>{{ t('import.source') }}</span>
             <a v-if="content.source.url" :href="content.source.url" target="_blank" rel="noopener noreferrer">{{ siteOf(content.source.url) || content.source.url }}</a>
             <span v-else>{{ t('import.pasted') }}</span>
-            <button v-if="content.source.url" v-tip="t('import.rereadTip')" type="button" class="y-link" :disabled="Boolean(rereading)" @click="reread(content.id)"><Icon name="refresh" :size="13" :weight="2" />{{ t('import.reread') }}</button>
+            <button v-if="content.source.url && rereading !== content.id" v-tip="t('import.rereadTip')" type="button" class="y-link" :disabled="Boolean(rereading)" @click="reread(content.id)"><Icon name="refresh" :size="13" :weight="2" />{{ t('import.reread') }}</button>
           </p>
+          <div v-if="rereading === content.id" class="y-import-progress">
+            <progress class="y-sr" :aria-label="t('import.reading')"></progress>
+            <span class="y-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>{{ t('import.reading') }}</span>
+            <button type="button" class="y-link" @click="cancelReread">{{ t('common.cancel') }}</button>
+          </div>
         </section>
 
         <section v-if="content.words.length" class="y-recap-part">
@@ -69,10 +75,18 @@ const pending = ref('')
         </section>
       </template>
 
-      <template v-else-if="state === 'list'">
+      <template v-else-if="state === 'list' || state === 'reading'">
         <form class="y-read-box" @submit.prevent="read">
           <textarea v-model="draft" class="y-input" name="material" rows="7" :placeholder="t('import.placeholder')" :aria-label="t('import.title')"></textarea>
-          <button type="submit" class="y-btn primary" :disabled="!draft.trim()">{{ t('import.read') }}</button>
+          <div class="y-read-box-actions">
+            <div v-if="state === 'reading'" class="y-import-progress">
+              <progress class="y-sr" :aria-label="t('import.reading')"></progress>
+              <span class="y-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span>{{ t('import.reading') }}</span>
+              <button type="button" class="y-link" @click="cancelRead">{{ t('common.cancel') }}</button>
+            </div>
+            <button v-else type="submit" class="y-btn primary" :disabled="!draft.trim()">{{ t('import.read') }}</button>
+          </div>
         </form>
 
         <section v-if="items.length" class="y-recap-part">
@@ -84,8 +98,13 @@ const pending = ref('')
                 <span>{{ siteOf(item.source.url) || t('import.pasted') }}</span>
               </RouterLink>
               <time>{{ formatDate(item.createdAt) }}</time>
-              <div class="y-acts" :class="{ sure: pending === item.id }">
-                <template v-if="pending === item.id">
+              <div class="y-acts" :class="{ sure: pending === item.id || rereading === item.id }">
+                <template v-if="rereading === item.id">
+                  <progress class="y-sr" :aria-label="t('import.reading')"></progress>
+                  <span class="y-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                  <button v-tip="t('common.cancel')" type="button" class="y-ic" :aria-label="t('common.cancel')" @click="cancelReread"><Icon name="close" :size="15" :weight="2" /></button>
+                </template>
+                <template v-else-if="pending === item.id">
                   <button type="button" class="y-btn sm danger" @click="remove(item.id)">{{ t('common.delete') }}</button>
                   <button v-tip="t('common.cancel')" type="button" class="y-ic" :aria-label="t('common.cancel')" @click="pending = ''"><Icon name="close" :size="15" :weight="2" /></button>
                 </template>

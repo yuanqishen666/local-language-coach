@@ -1,4 +1,4 @@
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api } from '../api'
@@ -8,6 +8,7 @@ import { stepParts } from '../../shared/proficiency'
 import { levelOverview, loadLevel } from '../level'
 import { checkLimit, overLimit } from '../usage'
 import type { IconName } from './kit/Icon.vue'
+import { REVIEW_DUE_REFRESH_EVENT } from '../review-due'
 
 // The reminder that this month's spending reached the amount the learner set is said once.
 let limitTold = false
@@ -94,7 +95,11 @@ export function useShell() {
     limitTold = true
     store.notify(t('usage.reached'))
   }
-  onMounted(() => { void refreshReviewDue(); refreshLevel(); void refreshSpending() })
+  onMounted(() => {
+    window.addEventListener(REVIEW_DUE_REFRESH_EVENT, refreshReviewDue)
+    void refreshReviewDue(); refreshLevel(); void refreshSpending()
+  })
+  onBeforeUnmount(() => window.removeEventListener(REVIEW_DUE_REFRESH_EVENT, refreshReviewDue))
   watch(() => route.path, () => { void refreshReviewDue(); refreshLevel(); void refreshSpending() })
   watch(languageCode, refreshLevel)
 

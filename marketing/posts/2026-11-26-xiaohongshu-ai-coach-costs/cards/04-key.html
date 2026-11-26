@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>真正开聊前还差一把钥匙</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1242px; height: 1656px; overflow: hidden; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif; background: #3154ff; color: #f8f5ee; }
+    .card { width: 100%; height: 100%; padding: 80px; display: grid; grid-template-rows: auto 1fr auto; position: relative; overflow: hidden; }
+    header { display: flex; justify-content: space-between; align-items: center; font-size: 28px; font-weight: 760; }
+    .content { align-self: center; display: grid; grid-template-columns: 1.18fr .82fr; gap: 50px; align-items: center; }
+    h1 { margin: 0; font-size: 91px; line-height: 1.08; letter-spacing: -.045em; font-weight: 930; }
+    h1 span { color: #fff49a; }
+    .lead { margin-top: 34px; max-width: 650px; font-size: 34px; line-height: 1.55; font-weight: 650; }
+    .key { width: 360px; height: 360px; border: 34px solid #f8f5ee; border-radius: 50%; position: relative; justify-self: center; transform: rotate(-18deg); }
+    .key::before { content: ""; position: absolute; width: 370px; height: 70px; background: #f8f5ee; left: 280px; top: 110px; border-radius: 0 35px 35px 0; transform-origin: left center; }
+    .key::after { content: ""; position: absolute; width: 90px; height: 120px; border-left: 35px solid #f8f5ee; border-right: 35px solid #f8f5ee; right: -445px; top: 110px; }
+    .facts { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 42px; }
+    .facts div { border-top: 2px solid rgba(248,245,238,.7); padding-top: 22px; font-size: 31px; line-height: 1.35; font-weight: 760; }
+    .facts small { display: block; margin-bottom: 10px; font-size: 22px; opacity: .7; }
+    footer { display: flex; justify-content: space-between; gap: 30px; font-size: 27px; font-weight: 720; }
+    footer span:last-child { opacity: .68; }
+  </style>
+</head>
+<body>
+  <article class="card">
+    <header><div>“开始聊天”之前</div><div>04 / 06</div></header>
+    <div class="content">
+      <div>
+        <h1>还差一把<br><span>模型钥匙</span></h1>
+        <div class="lead">没有 API 密钥，我不能完成一轮真实对话。这一步不该藏在安装说明里。</div>
+      </div>
+      <div class="key" aria-hidden="true"></div>
+      <div class="facts">
+        <div><small>01</small>自己选模型</div>
+        <div><small>02</small>自己填密钥</div>
+        <div><small>03</small>费用看服务商账单</div>
+      </div>
+    </div>
+    <footer><span>产品内不卖会员</span><span>模型服务可能收费</span></footer>
+  </article>
+</body>
+</html>

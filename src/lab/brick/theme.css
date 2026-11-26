@@ -73,6 +73,7 @@ html[data-lab='brick'], html[data-lab='brick'] body { background: #f1efea; }
 .bk .y-btn.primary, .bk .y-btn.primary:hover:not(:disabled) { background: var(--y-ink); color: #fff; }
 .bk .y-btn.danger, .bk .y-btn.danger:hover:not(:disabled) { background: var(--y-warn); color: #fff; }
 .bk .y-btn.sm { padding: 0 12px; border-radius: 999px; }
+.bk .y-btn.y-new-reply { background: var(--y-ink); }
 .bk :is(.y-act-row, .y-pend-acts) .y-btn.danger, .bk :is(.y-act-row, .y-pend-acts) .y-btn.danger:hover:not(:disabled) { background: var(--y-piece); color: var(--y-warn); }
 .bk .y-ic { border-radius: 50%; transition: background .15s, color .15s, transform .45s var(--y-spring); }
 .bk .y-ic:hover:not(:disabled) { background: var(--y-piece-hover); }

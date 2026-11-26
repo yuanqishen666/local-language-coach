@@ -31,7 +31,7 @@ const { store, t, focus, plain, reviewDue, language, level, navActive } = useShe
       </RouterLink>
     </nav>
 
-    <Transition name="note"><div v-if="store.toast" class="note" role="status">{{ store.toast }}</div></Transition>
+    <Transition name="note"><div v-if="store.toast" class="note" role="status"><span>{{ store.toast }}</span><button v-if="store.toastAction" type="button" class="toast-action" @click="store.runToastAction">{{ store.toastAction }}</button></div></Transition>
     <LabSwitch />
   </div>
 </template>

@@ -36,7 +36,7 @@ provide('labReviewDue', reviewDue)
     </main>
 
     <Tabs v-if="!plain && !focus" :active="navOn" :due="reviewDue" />
-    <Transition name="c-toast"><div v-if="store.toast" class="c-toast" role="status">{{ store.toast }}</div></Transition>
+    <Transition name="c-toast"><div v-if="store.toast" class="c-toast" role="status"><span>{{ store.toast }}</span><button v-if="store.toastAction" type="button" class="toast-action" @click="store.runToastAction">{{ store.toastAction }}</button></div></Transition>
     <LabSwitch />
   </div>
 </template>

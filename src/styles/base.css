@@ -90,6 +90,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .empty { padding: 58px 30px; color: var(--muted); text-align: center; }
 .empty strong { display: block; margin-bottom: 7px; color: var(--ink); font-family: 'Songti SC', STSong, serif; font-size: 23px; font-weight: 520; }
 .toast { position: fixed; left: 50%; bottom: 24px; z-index: 100; padding: 10px 16px; border-radius: 999px; background: var(--ink); color: white; font-size: 12px; box-shadow: var(--shadow); transform: translateX(-50%); }
+.toast-action { min-width: 24px; min-height: 24px; margin: -6px -7px -6px 10px; padding: 0 7px; border: 0; border-radius: 999px; background: rgba(255,255,255,.16); color: inherit; font: inherit; font-weight: 750; cursor: pointer; }
+.toast-action:hover { background: rgba(255,255,255,.24); }
+.toast-action:active { transform: scale(.96); }
+.toast-action:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .toast-enter-active, .toast-leave-active { transition: .2s; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, 8px); }
 .app-loading { height: 100vh; display: flex; align-items: center; justify-content: center; gap: 12px; color: var(--muted); }

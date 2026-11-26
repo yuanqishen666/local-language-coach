@@ -62,7 +62,7 @@ watch(() => route.path, () => { menu.value = false })
       </Transition>
     </template>
 
-    <Transition name="y-toast"><div v-if="store.toast" class="y-toast" role="status">{{ store.toast }}</div></Transition>
+    <Transition name="y-toast"><div v-if="store.toast" class="y-toast" role="status"><span>{{ store.toast }}</span><button v-if="store.toastAction" type="button" class="toast-action" @click="store.runToastAction">{{ store.toastAction }}</button></div></Transition>
     <LabSwitch :low="!focus" />
   </div>
 </template>

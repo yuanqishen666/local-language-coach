@@ -177,7 +177,8 @@ textarea.c-input{display:block;resize:none;overflow:hidden}
 .c-conv-bar{display:flex;align-items:center;gap:10px;height:56px;padding:0 20px 0 14px;border-bottom:1px solid var(--c-line)}
 .c-conv-bar h1{flex:1;min-width:0;font-size:14.5px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .c-conv-bar time{flex:none;color:var(--c-mute);font-size:12px;white-space:nowrap}
-.c-conv-scroll{overflow-y:auto;padding:28px 24px 32px}
+.c-conv-scroll{overflow-y:auto;padding:28px 24px 32px;scroll-behavior:smooth}
+.c-conv-scroll.has-new-reply{padding-bottom:68px}
 .c-lane{width:100%;max-width:calc(var(--c-lane,640px) + var(--c-gutter,36px) + var(--c-margin-w,280px));margin:0 auto}
 .c-lane>.c-scene,.c-deck-in{max-width:var(--c-lane,640px)}
 .c-turn{display:grid;grid-template-columns:minmax(0,var(--c-lane,640px)) var(--c-margin-w,280px);column-gap:var(--c-gutter,36px);align-items:start;padding:9px 0}
@@ -234,7 +235,10 @@ textarea.c-input{display:block;resize:none;overflow:hidden}
 .c-blank{display:grid;place-items:center;padding:12vh 0}
 .c-blank>i{width:120px;height:120px;font-size:35px}
 
-.c-deck{padding:0 24px 20px}
+.c-deck{position:relative;padding:0 24px 20px}
+.c-new-reply{position:absolute;left:50%;top:-36px;z-index:4;border-radius:var(--c-r-btn,99px);box-shadow:var(--c-pop);transform:translateX(-50%)}
+.c-new-reply-enter-active,.c-new-reply-leave-active{transition:opacity .16s,transform .28s var(--c-ease)}
+.c-new-reply-enter-from,.c-new-reply-leave-to{opacity:0;transform:translate(-50%,8px)}
 .c-deck-in{display:grid;gap:8px}
 .c-deck-note{color:var(--c-soft);font-size:12.5px}
 .c-write{display:flex;align-items:flex-end;gap:8px;padding:8px 8px 8px 18px;border:1px solid var(--c-line-strong);border-radius:var(--c-write-r,26px);background:var(--c-surface);transition:border-color .18s,box-shadow .18s,opacity .2s}
@@ -272,4 +276,7 @@ textarea.c-input{display:block;resize:none;overflow:hidden}
 }
 @media (prefers-reduced-motion:reduce){
   .c-note,.c-fold>:not(summary),.c-dots i{animation:none}
+  .c-conv-scroll{scroll-behavior:auto}
+  .c-new-reply-enter-active,.c-new-reply-leave-active{transition:opacity .12s}
+  .c-new-reply-enter-from,.c-new-reply-leave-to{transform:translateX(-50%)}
 }

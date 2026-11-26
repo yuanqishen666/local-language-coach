@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed,onMounted,ref,watch } from 'vue';import { useI18n } from 'vue-i18n';import { api } from '../api';import { translationErrorMessage } from '../provider-error-copy';import AppIcon from '../components/AppIcon.vue';import SpeakButton from '../components/SpeakButton.vue'
 import { ankiText, downloadText, fileName } from '../export-files'
+import { requestReviewDueRefresh } from '../review-due'
 const {t,locale}=useI18n();const words=ref<any[]>([]);const query=ref('');const selected=ref<any>(null);const localizing=ref('');const error=ref('')
 function current(item:any){return item.interfaceLocale===String(locale.value)}
 async function load(){words.value=await api.get<any[]>('/words')}onMounted(load)
 watch(locale,async()=>{selected.value=null;await load()})
 const shown=computed(()=>words.value.filter(w=>`${w.term} ${current(w)?w.meaning:''}`.toLowerCase().includes(query.value.toLowerCase())))
 async function selectWord(word:any){error.value='';if(current(word)){selected.value=word;return}localizing.value=word.id;selected.value=null;try{const localized=await api.post<any>(`/words/${word.id}/localize`,{interfaceLocale:String(locale.value)});const index=words.value.findIndex(item=>item.id===word.id);if(index>=0)words.value[index]=localized;selected.value=localized}catch{error.value=t('common.operationFailed')}finally{localizing.value=''}}
-async function remove(id:string){await api.delete(`/words/${id}`);if(selected.value?.id===id)selected.value=null;await load()}
+async function remove(id:string){await api.delete(`/words/${id}`);if(selected.value?.id===id)selected.value=null;await load();requestReviewDueRefresh()}
 function formatDate(value:string){return new Intl.DateTimeFormat(String(locale.value),{dateStyle:'medium'}).format(new Date(value))}
 const passageTranslations=ref<Record<string,string>>({});const passageOpen=ref<Record<string,boolean>>({});const passageBusy=ref<Record<string,boolean>>({});const passageErrors=ref<Record<string,string>>({})
 function passageKey(word:any){return `${word.id}:${String(locale.value)}`}

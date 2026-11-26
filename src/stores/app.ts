@@ -7,11 +7,23 @@ import { chooseSpeechLocale } from '../speech'
 import { speechVariant } from '../../shared/variants'
 import type { UiLocale } from '../../shared/locales'
 
+interface ToastOptions {
+  actionLabel?: string
+  duration?: number
+  onAction?: () => void
+  onExpire?: () => void
+}
+
 export const useAppStore = defineStore('app', () => {
   const settings = ref<Settings | null>(null)
   const loading = ref(true)
   const interfaceLanguage = ref<UiLocale>()
   const toast = ref('')
+  const toastAction = ref('')
+  let toastActionRun: (() => void) | undefined
+  let toastExpireRun: (() => void) | undefined
+  let toastTimer = 0
+  let toastVersion = 0
 
   // Speech is read and recognised in the variety of the language the learner chose.
   watch(settings, (value) => {
@@ -38,10 +50,35 @@ export const useAppStore = defineStore('app', () => {
     notify(copyText('common.settingsSaved', interfaceLanguage.value ?? saved.ui.locale))
   }
 
-  function notify(message: string) {
-    toast.value = message
-    window.setTimeout(() => { if (toast.value === message) toast.value = '' }, 2600)
+  function clearToast(expire = false) {
+    window.clearTimeout(toastTimer)
+    toastVersion += 1
+    const onExpire = toastExpireRun
+    toast.value = ''
+    toastAction.value = ''
+    toastActionRun = undefined
+    toastExpireRun = undefined
+    if (expire) onExpire?.()
   }
 
-  return { settings, loading, interfaceLanguage, toast, receive, load, save, notify }
+  function notify(message: string, options: ToastOptions = {}) {
+    clearToast(true)
+    const version = toastVersion
+    toast.value = message
+    toastAction.value = options.actionLabel || ''
+    toastActionRun = options.onAction
+    toastExpireRun = options.onExpire
+    toastTimer = window.setTimeout(() => {
+      if (toastVersion !== version || toast.value !== message) return
+      clearToast(true)
+    }, options.duration ?? (options.actionLabel ? 6000 : 2600))
+  }
+
+  function runToastAction() {
+    const run = toastActionRun
+    clearToast(false)
+    run?.()
+  }
+
+  return { settings, loading, interfaceLanguage, toast, toastAction, receive, load, save, notify, clearToast, runToastAction }
 })

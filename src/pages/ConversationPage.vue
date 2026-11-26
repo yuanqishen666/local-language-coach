@@ -34,6 +34,7 @@ import {
   conversationTurnStatus,
   type ConversationTurnStatusResponse,
 } from '../conversation-turn-recovery'
+import { isNearConversationEnd, restoreFailedComposer } from '../conversation-scroll'
 
 const route = useRoute()
 const router = useRouter()
@@ -44,6 +45,7 @@ const input = ref('')
 const sending = ref(false)
 const compositionActive = ref(false)
 const chat = ref<HTMLElement | null>(null)
+const newReplyAvailable = ref(false)
 const error = ref('')
 const lookup = ref({ open: false, term: '', sentence: '' })
 const sceneStarting = ref(false)
@@ -171,6 +173,7 @@ async function openConversation(conversationId: string, options: { preserveInput
   if (!options.preserveInput) input.value = ''
   error.value = ''
   sending.value = false
+  newReplyAvailable.value = false
   activeSubmissionId = ''
   if (openedConversationId !== conversationId) {
     openedConversationId = conversationId
@@ -191,20 +194,43 @@ async function loadConversationMemories(conversationId = String(route.params.id)
   }
 }
 
-async function load(conversationId = String(route.params.id)) {
+async function load(conversationId = String(route.params.id), options: { preserveScroll?: boolean } = {}) {
   const version = ++loadVersion
   const requestedLocale = String(locale.value)
+  const previousScrollTop = chat.value?.scrollTop ?? 0
   const loaded = await api.get<Conversation>(`/conversations/${encodeURIComponent(conversationId)}?interfaceLocale=${encodeURIComponent(requestedLocale)}`)
   if (version !== loadVersion || requestedLocale !== String(locale.value) || !isCurrentConversation(conversationId)) return
   conversation.value = loaded
-  await scrollEnd()
+  if (options.preserveScroll) {
+    await nextTick()
+    if (chat.value) chat.value.scrollTop = previousScrollTop
+  } else await scrollEnd()
   return loaded
 }
 
-async function scrollEnd() {
-  await nextTick()
-  if (chat.value) chat.value.scrollTop = chat.value.scrollHeight
+function conversationIsNearEnd() {
+  return !chat.value || isNearConversationEnd(chat.value)
 }
+
+function handleConversationScroll() {
+  if (conversationIsNearEnd()) newReplyAvailable.value = false
+}
+
+function reducesMotion() {
+  return typeof globalThis.matchMedia === 'function' && globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+async function scrollEnd(smooth = false) {
+  await nextTick()
+  const element = chat.value
+  if (!element) return
+  if (smooth && !reducesMotion() && typeof element.scrollTo === 'function') {
+    element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' })
+  } else element.scrollTop = element.scrollHeight
+  newReplyAvailable.value = false
+}
+
+function showLatestReply() { void scrollEnd(true) }
 
 function newClientMessageId() {
   return globalThis.crypto?.randomUUID?.() || `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -232,8 +258,8 @@ function finishSubmission(turn: StoredConversationTurn) {
 async function completeStoredTurn(turn: StoredConversationTurn, result?: TurnResult, optimisticTurn?: OptimisticTurn) {
   clearConversationTurn(sessionStorage, turn.conversationId, turn.clientMessageId)
   if (!isCurrentConversation(turn.conversationId)) return
-  input.value = ''
   error.value = ''
+  const followReply = conversationIsNearEnd()
   if (result && optimisticTurn && conversation.value?.id === turn.conversationId) {
     completeOptimisticTurn(conversation.value.messages, {
       localId: optimisticTurn.localId,
@@ -242,9 +268,14 @@ async function completeStoredTurn(turn: StoredConversationTurn, result?: TurnRes
     conversation.value.status = 'active'
     if (result.level) levelMoved(result.level)
     replyArrived(result.assistantMessage)
-    await scrollEnd().catch(() => undefined)
+    if (followReply) await scrollEnd(true).catch(() => undefined)
+    else {
+      await nextTick()
+      newReplyAvailable.value = true
+    }
   } else {
-    await load(turn.conversationId).catch(() => undefined)
+    await load(turn.conversationId, { preserveScroll: !followReply }).catch(() => undefined)
+    if (!followReply) newReplyAvailable.value = true
   }
   turnsThisVisit += 1
   void loadConversationMemories(turn.conversationId)
@@ -254,7 +285,7 @@ async function completeStoredTurn(turn: StoredConversationTurn, result?: TurnRes
 async function restoreStoredTurn(turn: StoredConversationTurn, value: unknown, optimisticTurn?: OptimisticTurn) {
   updateConversationTurnPhase(sessionStorage, turn, 'retryable')
   if (!isCurrentConversation(turn.conversationId)) return
-  input.value = turn.content
+  input.value = restoreFailedComposer(turn.content, input.value)
   if (optimisticTurn) failOptimisticTurn(optimisticTurn.message)
   if (needsModelConfiguration(value)) await guideToModelSettings(router, route.fullPath)
   else error.value = turnErrorMessage(value)
@@ -727,7 +758,7 @@ function leaveVoice() {
 
     <main class="conversation-layout" :class="{ 'has-learning-rail': hasLearningRailContent }" :aria-busy="sending || sceneStarting" data-qs-id="qs-conversation-layout">
       <section class="chat-column" data-qs-id="qs-conversation-stream">
-        <div ref="chat" class="message-list" data-qs-id="qs-message-list">
+        <div ref="chat" class="message-list" :class="{ 'has-new-reply': newReplyAvailable }" data-qs-id="qs-message-list" @scroll.passive="handleConversationScroll">
           <div class="session-start"><span>{{ formatDate(conversation.createdAt) }}</span></div>
           <section v-if="conversation.setup && setupMatchesLocale" class="conversation-context">
             <div class="partner-avatar">{{ (conversation.setup.partnerName || conversation.setup.partnerRole).slice(0, 1) }}</div>
@@ -753,10 +784,11 @@ function leaveVoice() {
           </div>
         </div>
         <div class="composer" data-qs-id="qs-conversation-composer">
+          <Transition name="new-reply"><button v-if="newReplyAvailable" type="button" class="new-reply-button" data-qs-id="qs-new-reply" aria-live="polite" @click="showLatestReply">{{ t('conversation.newReply') }} <span aria-hidden="true">↓</span></button></Transition>
           <div v-if="conversation.status === 'archived'" class="archived-note">{{ t('conversation.archivedContinue') }}</div>
           <div v-if="error" class="send-error" role="alert">{{ error }}</div>
           <label class="composer-label" for="conversation-message">{{ t('conversation.openPlaceholder') }}</label>
-          <textarea id="conversation-message" v-model="input" name="message" autocomplete="off" :disabled="sending" :placeholder="sending ? t('conversation.waitPlaceholder') : t('conversation.openPlaceholder')" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @keydown="handleComposerKeydown"></textarea>
+          <textarea id="conversation-message" v-model="input" name="message" autocomplete="off" :placeholder="t('conversation.openPlaceholder')" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @keydown="handleComposerKeydown"></textarea>
           <footer><span>{{ t('conversation.sendHint') }}</span><button type="button" :aria-label="t('conversation.send')" :disabled="!input.trim() || sending" @click="send"><AppIcon name="send" /></button></footer>
         </div>
       </section>
@@ -816,12 +848,12 @@ function leaveVoice() {
 
 <style scoped>
 .conversation-shell{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:#f4f1ea}.conversation-head{height:72px;flex:0 0 72px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:20px;padding:0 28px;border-bottom:1px solid var(--line);background:rgba(247,245,239,.96);z-index:5}.conversation-head>button{justify-self:start;width:38px;height:38px;border:1px solid var(--line);border-radius:11px;background:transparent;display:grid;place-items:center;color:var(--muted)}.head-title{text-align:center;min-width:0}.head-title span,.head-title b{display:block}.head-title span{font-size:11px;color:var(--muted);margin-bottom:3px}.head-title b{max-width:420px;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.always-open{justify-self:end;display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted)}.always-open i{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(49,88,216,.09)}
-.conversation-layout{min-height:0;flex:1;display:grid;grid-template-columns:minmax(680px,820px);justify-content:center;gap:36px;padding:0 42px}.conversation-layout.has-learning-rail{grid-template-columns:minmax(680px,820px) 310px}.chat-column{min-width:0;min-height:0;display:flex;flex-direction:column}.message-list{min-height:0;flex:1;overflow:auto;padding:28px 18px 22px;scroll-behavior:smooth;scrollbar-gutter:stable}.session-start{display:flex;align-items:center;gap:13px;margin-bottom:24px;color:var(--muted)}.session-start::before,.session-start::after{content:"";height:1px;flex:1;background:rgba(32,33,30,.08)}.session-start span{font-size:11px}.session-start p{font-size:11px;margin:5px 0}.conversation-context{max-width:760px;margin:0 auto 22px;padding:13px 15px;border:1px solid var(--line);border-radius:14px;background:rgba(251,250,246,.72);display:grid;grid-template-columns:38px 1fr auto;align-items:center;gap:11px}.partner-avatar{width:36px;height:36px;border-radius:10px;background:#e7ebf8;color:var(--green);display:grid;place-items:center;font-weight:800}.conversation-context b,.conversation-context span{display:block}.conversation-context b{font-size:11px}.conversation-context span{font-size:11px;color:var(--muted);margin-top:2px}.conversation-context p{max-width:250px;font-size:11px;color:var(--muted);text-align:right;margin:0}.empty-chat{text-align:center;max-width:540px;margin:40px auto;color:var(--muted)}.empty-chat>span{width:48px;height:48px;border-radius:14px;background:#e7ebf8;color:var(--green);display:grid;place-items:center;margin:0 auto 14px}.empty-chat h2{font-size:18px;color:var(--ink)}.empty-chat p{display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;line-height:1.7}.reply-pending{display:flex;gap:11px;max-width:760px;margin:0 auto 22px}.pending-avatar{width:30px;height:30px;border-radius:9px;background:var(--green);color:#fff;display:grid;place-items:center;font-size:11px;font-weight:800}.typing-bubble{min-height:42px;border:1px solid var(--line);border-radius:4px 15px 15px 15px;background:var(--paper);padding:11px 14px;display:flex;align-items:center;gap:9px;color:var(--muted);font-size:11px}.typing-dots{display:flex;gap:3px}.typing-dots i{width:4px;height:4px;border-radius:50%;background:var(--green-2);animation:typing 1s infinite}.typing-dots i:nth-child(2){animation-delay:.15s}.typing-dots i:nth-child(3){animation-delay:.3s}@keyframes typing{50%{transform:translateY(-3px)}}
-.composer{position:relative;padding:14px 18px 20px;border-top:1px solid rgba(32,33,30,.08);background:linear-gradient(to bottom,rgba(247,245,239,.76),#f7f5ef 22%)}.composer-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.composer textarea{display:block;width:100%;min-height:72px;max-height:160px;resize:none;border:1px solid var(--line);border-bottom:0;border-radius:16px 16px 0 0;background:#fffefa;padding:14px 16px;color:var(--ink);outline:none;line-height:1.6;box-shadow:0 14px 38px rgba(36,35,30,.07)}.composer textarea:focus{border-color:var(--green-2);box-shadow:0 0 0 3px rgba(49,88,216,.08),0 14px 38px rgba(36,35,30,.07)}.composer footer{height:40px;border:1px solid var(--line);border-top:0;border-radius:0 0 16px 16px;background:#fffefa;padding:0 8px 0 15px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 14px 38px rgba(36,35,30,.07)}.composer footer span{font-size:11px;color:var(--muted)}.composer footer button{width:31px;height:31px;border:0;border-radius:9px;background:var(--green);color:white;display:grid;place-items:center}.composer footer button:disabled{opacity:.35}.send-error,.archived-note{max-width:820px;margin:0 auto 8px;padding:9px 11px;border-radius:8px;font-size:11px}.send-error{padding:0 2px;border-radius:0;background:transparent;color:var(--red)}.archived-note{background:#edf1e9;color:var(--green)}
+.conversation-layout{min-height:0;flex:1;display:grid;grid-template-columns:minmax(680px,820px);justify-content:center;gap:36px;padding:0 42px}.conversation-layout.has-learning-rail{grid-template-columns:minmax(680px,820px) 310px}.chat-column{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column}.message-list{min-height:0;flex:1;overflow:auto;padding:28px 18px 22px;scroll-behavior:smooth;scrollbar-gutter:stable}.message-list.has-new-reply{padding-bottom:64px}.session-start{display:flex;align-items:center;gap:13px;margin-bottom:24px;color:var(--muted)}.session-start::before,.session-start::after{content:"";height:1px;flex:1;background:rgba(32,33,30,.08)}.session-start span{font-size:11px}.session-start p{font-size:11px;margin:5px 0}.conversation-context{max-width:760px;margin:0 auto 22px;padding:13px 15px;border:1px solid var(--line);border-radius:14px;background:rgba(251,250,246,.72);display:grid;grid-template-columns:38px 1fr auto;align-items:center;gap:11px}.partner-avatar{width:36px;height:36px;border-radius:10px;background:#e7ebf8;color:var(--green);display:grid;place-items:center;font-weight:800}.conversation-context b,.conversation-context span{display:block}.conversation-context b{font-size:11px}.conversation-context span{font-size:11px;color:var(--muted);margin-top:2px}.conversation-context p{max-width:250px;font-size:11px;color:var(--muted);text-align:right;margin:0}.empty-chat{text-align:center;max-width:540px;margin:40px auto;color:var(--muted)}.empty-chat>span{width:48px;height:48px;border-radius:14px;background:#e7ebf8;color:var(--green);display:grid;place-items:center;margin:0 auto 14px}.empty-chat h2{font-size:18px;color:var(--ink)}.empty-chat p{display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;line-height:1.7}.reply-pending{display:flex;gap:11px;max-width:760px;margin:0 auto 22px}.pending-avatar{width:30px;height:30px;border-radius:9px;background:var(--green);color:#fff;display:grid;place-items:center;font-size:11px;font-weight:800}.typing-bubble{min-height:42px;border:1px solid var(--line);border-radius:4px 15px 15px 15px;background:var(--paper);padding:11px 14px;display:flex;align-items:center;gap:9px;color:var(--muted);font-size:11px}.typing-dots{display:flex;gap:3px}.typing-dots i{width:4px;height:4px;border-radius:50%;background:var(--green-2);animation:typing 1s infinite}.typing-dots i:nth-child(2){animation-delay:.15s}.typing-dots i:nth-child(3){animation-delay:.3s}@keyframes typing{50%{transform:translateY(-3px)}}
+.composer{position:relative;padding:14px 18px 20px;border-top:1px solid rgba(32,33,30,.08);background:linear-gradient(to bottom,rgba(247,245,239,.76),#f7f5ef 22%)}.new-reply-button{position:absolute;left:50%;top:-30px;z-index:2;min-height:28px;padding:0 12px;border:0;border-radius:999px;background:var(--ink);color:white;box-shadow:var(--shadow);font-size:11px;font-weight:750;translate:-50% 0}.new-reply-button:active{scale:.97}.new-reply-enter-active,.new-reply-leave-active{transition:opacity .16s ease,translate .24s cubic-bezier(.2,.8,.2,1)}.new-reply-enter-from,.new-reply-leave-to{opacity:0;translate:-50% 8px}.composer-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.composer textarea{display:block;width:100%;min-height:72px;max-height:160px;resize:none;border:1px solid var(--line);border-bottom:0;border-radius:16px 16px 0 0;background:#fffefa;padding:14px 16px;color:var(--ink);outline:none;line-height:1.6;box-shadow:0 14px 38px rgba(36,35,30,.07)}.composer textarea:focus{border-color:var(--green-2);box-shadow:0 0 0 3px rgba(49,88,216,.08),0 14px 38px rgba(36,35,30,.07)}.composer footer{height:40px;border:1px solid var(--line);border-top:0;border-radius:0 0 16px 16px;background:#fffefa;padding:0 8px 0 15px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 14px 38px rgba(36,35,30,.07)}.composer footer span{font-size:11px;color:var(--muted)}.composer footer button{width:31px;height:31px;border:0;border-radius:9px;background:var(--green);color:white;display:grid;place-items:center}.composer footer button:disabled{opacity:.35}.send-error,.archived-note{max-width:820px;margin:0 auto 8px;padding:9px 11px;border-radius:8px;font-size:11px}.send-error{padding:0 2px;border-radius:0;background:transparent;color:var(--red)}.archived-note{background:#edf1e9;color:var(--green)}
 .learning-rail{min-width:0;min-height:0;overflow:auto;padding:28px 0 28px 32px;border-left:1px solid var(--line);scrollbar-gutter:stable}.rail-section{padding:18px 0;border-top:1px solid var(--line)}.rail-context{display:grid;grid-template-columns:36px 1fr;gap:10px;align-items:center;border-top:0}.rail-partner-avatar{width:34px;height:34px;border-radius:10px;background:#e7ebf8;color:var(--green);display:grid;place-items:center;font-size:11px;font-weight:800}.rail-context b,.rail-context span{display:block}.rail-context b{font-size:12px}.rail-context span{margin-top:3px;color:var(--muted);font-size:10px}.rail-context p{grid-column:1/-1;margin:4px 0 0;color:var(--muted);font-size:11px;line-height:1.6}.rail-note small{display:flex;align-items:center;gap:5px;margin-bottom:10px;color:#7c672e;font-size:10px;font-weight:800;letter-spacing:.03em}.rail-note s{display:block;margin-bottom:5px;color:#9a8478;font-size:11px;line-height:1.5}.rail-note strong{display:block;color:var(--green);font-size:13px;line-height:1.5}.rail-spoken-phrase{display:flex;align-items:center;gap:5px}.rail-spoken-phrase strong{min-width:0;flex:1}.rail-spoken-phrase :deep(.speak-button){color:var(--green)}.rail-note p{margin:7px 0 0;color:var(--muted);font-size:11px;line-height:1.55}.rail-memory{margin:18px 0;padding:15px;border:0;border-radius:15px;background:var(--paper);box-shadow:0 10px 28px rgba(40,39,34,.06)}.rail-memory small,.rail-memory b,.rail-memory s{display:block}.rail-memory small{color:var(--muted);font-size:10px}.rail-memory s{margin-top:5px;color:#9a8478;font-size:10px}.rail-memory b{margin-top:6px;font-size:13px}.rail-memory button{width:100%;min-height:36px;margin-top:13px;border:0;border-radius:10px;background:#e7ebfb;color:var(--green-2);display:flex;align-items:center;justify-content:center;gap:5px;font-size:11px;font-weight:800}
 .scene-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:7px;padding-top:10px;border-top:1px solid var(--line)}.scene-actions button{min-height:32px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:transparent;color:var(--muted);font-size:10px;font-weight:750}.scene-actions button:hover:not(:disabled){border-color:var(--green-2);color:var(--green)}.scene-actions progress{width:100%;height:3px;border:0;accent-color:var(--green)}.rail-scene-actions{margin-top:5px}.rail-scene-actions button{flex:1 1 calc(50% - 4px);padding:0 7px}
 @media(min-width:1181px){.message-list>.conversation-context{display:none}.chat-column :deep(.message .coach-note),.chat-column :deep(.message .memory-candidate){display:none}}
 @media(max-width:1180px){.conversation-layout,.conversation-layout.has-learning-rail{grid-template-columns:minmax(0,1fr);padding:0}.learning-rail{display:none}.message-list{padding:28px max(20px,calc((100vw - 820px)/2)) 22px}.composer{padding:13px max(20px,calc((100vw - 820px)/2)) 18px}}
 @media(max-width:820px){.conversation-head{height:64px;flex-basis:64px;grid-template-columns:44px minmax(0,1fr) auto;padding:0 14px;gap:10px}.head-title{text-align:left}.head-title b{max-width:55vw}.always-open{font-size:0}.always-open i{display:block}.message-list,.composer{padding-left:14px;padding-right:14px}.conversation-context{grid-template-columns:36px 1fr}.conversation-context p{grid-column:1/-1;text-align:left;max-width:none}}
-@media(prefers-reduced-motion:reduce){.message-list{scroll-behavior:auto}.typing-dots i{animation:none}}
+@media(prefers-reduced-motion:reduce){.message-list{scroll-behavior:auto}.typing-dots i{animation:none}.new-reply-enter-active,.new-reply-leave-active{transition:opacity .12s ease}.new-reply-enter-from,.new-reply-leave-to{translate:-50% 0}}
 </style>

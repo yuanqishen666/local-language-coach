@@ -110,5 +110,5 @@ function navActive(path: string) {
     </aside>
     <main class="main-area"><RouterView /></main>
   </div>
-  <Transition name="toast"><div v-if="store.toast" class="toast">{{ store.toast }}</div></Transition>
+  <Transition name="toast"><div v-if="store.toast" class="toast" role="status"><span>{{ store.toast }}</span><button v-if="store.toastAction" type="button" class="toast-action" @click="store.runToastAction">{{ store.toastAction }}</button></div></Transition>
 </template>

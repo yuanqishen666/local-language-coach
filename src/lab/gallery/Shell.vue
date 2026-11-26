@@ -92,7 +92,7 @@ watch(() => route.fullPath, drop)
 
     <Tabs v-if="!plain && !focus" :active="navOn" :due="reviewDue" />
     <div ref="tag" class="follow" :class="{ on: tagOn }" aria-hidden="true">{{ tagText }}</div>
-    <Transition name="c-toast"><div v-if="store.toast" class="c-toast" role="status">{{ store.toast }}</div></Transition>
+    <Transition name="c-toast"><div v-if="store.toast" class="c-toast" role="status"><span>{{ store.toast }}</span><button v-if="store.toastAction" type="button" class="toast-action" @click="store.runToastAction">{{ store.toastAction }}</button></div></Transition>
     <LabSwitch :low="!focus && !plain" />
   </div>
 </template>

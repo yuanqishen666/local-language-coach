@@ -6,7 +6,6 @@ import { privacyCopy } from '../src/data-privacy/copy'
 import { publicWords } from './public-copy'
 
 const SOURCE = 'https://github.com/yuanqishen666/local-language-coach'
-const UPDATED = '2026-11-24'
 const escape = (value: string) => value.replace(/[&<>"']/gu, (character) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 })[character]!)
@@ -147,15 +146,11 @@ function privacyPage(config: ResolvedConfig, locale?: UiLocale) {
   const contact = config.env.VITE_PRIVACY_CONTACT
   const title = `${words.privacy} · ${words.brand}`
   const paragraphs = (sequence: readonly string[]) => sequence.map((line) => `<p>${escape(line)}</p>`).join('')
-  const updated = new Intl.DateTimeFormat(lang, { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(UPDATED))
   return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="description" content="${escape(copy.open[0])}">
     <title>${escape(title)}</title>${styles}${metadata(config, locale, 'privacy')}</head>
-    <body><main data-public data-qs-id="qs-data-privacy"><header><h1>${escape(words.privacy)}</h1>
-    <p>${escape(words.updated)} <time datetime="${UPDATED}">${escape(updated)}</time></p>
-    <div class="public-actions">${link(openEditionUrl(config.base, lang), words.open)}</div>
-    ${languages(config.base, lang, 'privacy')}</header>
+    <body><main data-public data-qs-id="qs-data-privacy"><header><h1>${escape(words.privacy)}</h1></header>
     <section><h2>${escape(copy.openTitle)}</h2>${paragraphs([...copy.open, words.backup])}</section>
     ${beta ? `<section><h2>${escape(words.beta)}</h2><p hidden data-privacy-model="${escape(`${beta}api/pro/model`)}" data-model-text="${escape(copy.model)}"></p>${paragraphs([...copy.beta, words.session])}</section>` : ''}
     <footer>${link(SOURCE, words.repository)}${link(`${SOURCE}/blob/main/LICENSE`, words.license)}

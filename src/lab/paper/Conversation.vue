@@ -7,9 +7,10 @@ import { useConversationPage } from '../logic/ConversationPage'
 import { aboveComposer } from '../../conversation-extras'
 
 const {
-  router, t, conversation, input, sending, chat, error, lookup, sceneStarting, partnerInitial, targetLanguageCode,
+  router, t, conversation, input, sending, chat, newReplyAvailable, error, lookup, sceneStarting, partnerInitial, targetLanguageCode,
   setupMatchesLocale, conversationTitle, send, openLookup, saveMemory, formatDate, handleComposerKeydown,
   handleCompositionStart, handleCompositionEnd, feedbackFor, replayScene, toggleSceneSaved, customizeScene,
+  handleConversationScroll, showLatestReply,
 } = useConversationPage()
 
 // Presentation only: the writing line grows with the text, the seal presses when sending.
@@ -37,7 +38,7 @@ function press() {
       <time>{{ formatDate(conversation.createdAt) }}</time>
     </header>
 
-    <div ref="chat" class="scroll" :aria-busy="sending || sceneStarting">
+    <div ref="chat" class="scroll" :class="{ 'has-new-reply': newReplyAvailable }" :aria-busy="sending || sceneStarting" @scroll.passive="handleConversationScroll">
       <div class="sheet">
         <section v-if="conversation.setup && setupMatchesLocale" class="scene">
           <i class="pp-seal" aria-hidden="true">{{ (conversation.setup.partnerName || conversation.setup.partnerRole).slice(0, 1) }}</i>
@@ -76,11 +77,12 @@ function press() {
     </div>
 
     <div class="desk">
+      <Transition name="new-reply"><button v-if="newReplyAvailable" type="button" class="new-reply" data-qs-id="qs-new-reply" aria-live="polite" @click="showLatestReply">{{ t('conversation.newReply') }} <span aria-hidden="true">↓</span></button></Transition>
       <div class="desk-in">
         <p v-if="conversation.status === 'archived'" class="desk-note">{{ t('conversation.archivedContinue') }}</p>
         <p v-if="error" class="pp-error" role="alert">{{ error }}</p>
         <component :is="extra" v-for="(extra, at) in aboveComposer" :key="at" :conversation="conversation" />
-        <div class="write" :class="{ busy: sending, filled: !!input.trim() }">
+        <div class="write" :class="{ filled: !!input.trim() }">
           <label class="sr" for="conversation-message">{{ t('conversation.openPlaceholder') }}</label>
           <textarea
             id="conversation-message"
@@ -89,7 +91,6 @@ function press() {
             name="message"
             rows="1"
             autocomplete="off"
-            :disabled="sending"
             @compositionstart="handleCompositionStart"
             @compositionend="handleCompositionEnd"
             @keydown="handleComposerKeydown"
@@ -115,7 +116,8 @@ function press() {
 .bar h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 17px/1.3 var(--serif);letter-spacing:.01em}
 .bar time{justify-self:end;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 
-.scroll{overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable both-edges}
+.scroll{overflow-y:auto;overscroll-behavior:contain;scroll-behavior:smooth;scrollbar-gutter:stable both-edges}
+.scroll.has-new-reply{padding-bottom:48px}
 .sheet{max-width:var(--shell);margin:0 auto;padding:44px var(--gutter) 40px calc(var(--gutter) + 46px);display:grid;gap:30px}
 
 .scene{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 16px;max-width:660px;padding-bottom:28px;border-bottom:1px solid var(--line)}
@@ -139,7 +141,9 @@ function press() {
 .typing span i:nth-child(3){animation-delay:.32s}
 @keyframes ink{0%,70%,100%{transform:scale(.5);opacity:.25}35%{transform:scale(1);opacity:.9}}
 
-.desk{border-top:1px solid var(--line);background:var(--paper)}
+.desk{position:relative;border-top:1px solid var(--line);background:var(--paper)}
+.new-reply{position:absolute;left:50%;top:-34px;z-index:4;min-height:28px;padding:0 12px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink);box-shadow:0 10px 24px rgba(40,35,28,.12);font-size:12px;font-weight:650;transform:translateX(-50%)}
+.new-reply-enter-active,.new-reply-leave-active{transition:opacity .16s ease,transform .28s var(--out)}.new-reply-enter-from,.new-reply-leave-to{opacity:0;transform:translate(-50%,8px)}
 .desk-in{max-width:var(--shell);margin:0 auto;padding:14px var(--gutter) calc(18px + env(safe-area-inset-bottom)) calc(var(--gutter) + 46px);display:grid;gap:8px}
 .desk-note{color:var(--muted);font-size:12.5px;line-height:1.7}
 .write{position:relative;display:flex;align-items:flex-end;gap:16px;max-width:660px}
@@ -170,5 +174,5 @@ function press() {
   .scene-acts{grid-column:1 / -1}
   .blank{font-size:180px}
 }
-@media (prefers-reduced-motion:reduce){.typing span i,.opening i,.nib,.scene-wait{animation:none}}
+@media (prefers-reduced-motion:reduce){.scroll{scroll-behavior:auto}.typing span i,.opening i,.nib,.scene-wait{animation:none}.new-reply-enter-active,.new-reply-leave-active{transition:opacity .12s}.new-reply-enter-from,.new-reply-leave-to{transform:translateX(-50%)}}
 </style>

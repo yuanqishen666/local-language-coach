@@ -40,7 +40,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
       </RouterLink>
     </nav>
 
-    <Transition name="pa"><div v-if="store.toast" class="pa" role="status"><i class="nf-lamp on"></i>{{ store.toast }}</div></Transition>
+    <Transition name="pa"><div v-if="store.toast" class="pa" role="status"><i class="nf-lamp on"></i><span>{{ store.toast }}</span><button v-if="store.toastAction" type="button" class="toast-action" @click="store.runToastAction">{{ store.toastAction }}</button></div></Transition>
     <LabSwitch />
   </div>
 </template>

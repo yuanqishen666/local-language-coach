@@ -27,6 +27,9 @@ html[data-lab='daily'], html[data-lab='daily'] body { background: #fff; }
   --y-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   --y-sidebar: 232px;
   --y-tabs: 0px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 100vh;
   min-height: 100dvh;
   background: var(--y-bg);
@@ -69,7 +72,7 @@ html[data-lab='daily'], html[data-lab='daily'] body { background: #fff; }
 .y-item em { flex: none; min-width: 18px; height: 18px; padding: 0 5px; display: grid; place-items: center; border-radius: 9px; background: var(--y-accent); color: #fff; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .y-item .code { flex: none; width: 16px; display: grid; place-items: center; color: var(--y-mute); font: 650 9.5px/1 var(--y-mono); }
 .y-item .level { background: none; color: var(--y-mute); font-weight: 500; padding: 0; }
-.y-main { min-width: 0; min-height: 100vh; min-height: 100dvh; padding-bottom: var(--y-tabs); }
+.y-main { width: 100%; min-width: 0; max-width: 100%; min-height: 100vh; min-height: 100dvh; padding-bottom: var(--y-tabs); }
 
 .y-tabs { display: none; }
 .y-view-enter-active { transition: opacity .18s ease, transform .28s var(--y-ease); }
@@ -224,5 +227,14 @@ html[data-lab='daily'] .lab-words.live .lab-word:hover { background: var(--y-tin
   .y-more-menu { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .y-app *, .y-app *::before, .y-app *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  .y-dots i, .y-veil-enter-active .y-dialog { animation: none; }
+  .y-view-enter-active, .y-view-leave-active,
+  .y-drawer-enter-active, .y-drawer-leave-active,
+  .y-toast-enter-active, .y-toast-leave-active,
+  .y-more-enter-active, .y-more-leave-active { transition: opacity .12s ease; }
+  .y-view-enter-from, .y-view-leave-to,
+  .y-drawer-enter-from, .y-drawer-leave-to,
+  .y-toast-enter-from, .y-toast-leave-to,
+  .y-more-enter-from, .y-more-leave-to { transform: none; }
+  .y-btn, .y-ic { transition: background .12s, border-color .12s, color .12s, opacity .12s; }
 }

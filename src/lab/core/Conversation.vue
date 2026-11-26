@@ -8,9 +8,10 @@ import { useConversationPage } from '../logic/ConversationPage'
 import { aboveComposer } from '../../conversation-extras'
 
 const {
-  router, t, conversation, input, sending, chat, error, lookup, sceneStarting, partnerInitial, targetLanguageCode,
+  router, t, conversation, input, sending, chat, newReplyAvailable, error, lookup, sceneStarting, partnerInitial, targetLanguageCode,
   setupMatchesLocale, conversationTitle, send, openLookup, saveMemory, formatDate, handleComposerKeydown,
   handleCompositionStart, handleCompositionEnd, feedbackFor, replayScene, toggleSceneSaved, customizeScene,
+  handleConversationScroll, showLatestReply,
 } = useConversationPage()
 const mascot = inject<Component | null>('labMascot', null)
 
@@ -34,7 +35,7 @@ watch(input, async () => {
       <time>{{ formatDate(conversation.createdAt) }}</time>
     </header>
 
-    <div ref="chat" class="c-conv-scroll" :aria-busy="sending || sceneStarting">
+    <div ref="chat" class="c-conv-scroll" :class="{ 'has-new-reply': newReplyAvailable }" :aria-busy="sending || sceneStarting" @scroll.passive="handleConversationScroll">
       <div class="c-lane">
         <section v-if="conversation.setup && setupMatchesLocale" class="c-scene">
           <i class="c-avatar" aria-hidden="true"><component :is="mascot" v-if="mascot" /><template v-else>{{ partnerInitial }}</template></i>
@@ -76,12 +77,13 @@ watch(input, async () => {
     </div>
 
     <div class="c-deck">
+      <Transition name="c-new-reply"><button v-if="newReplyAvailable" type="button" class="c-btn small c-new-reply" data-qs-id="qs-new-reply" aria-live="polite" @click="showLatestReply">{{ t('conversation.newReply') }} <span aria-hidden="true">↓</span></button></Transition>
       <div class="c-lane">
         <div class="c-deck-in">
           <p v-if="conversation.status === 'archived'" class="c-deck-note">{{ t('conversation.archivedContinue') }}</p>
           <p v-if="error" class="c-error" role="alert">{{ error }}</p>
           <component :is="extra" v-for="(extra, at) in aboveComposer" :key="at" :conversation="conversation" />
-          <div class="c-write" :class="{ busy: sending }">
+          <div class="c-write">
             <label class="c-sr" for="conversation-message">{{ t('conversation.openPlaceholder') }}</label>
             <textarea
               id="conversation-message"
@@ -90,7 +92,6 @@ watch(input, async () => {
               name="message"
               rows="1"
               autocomplete="off"
-              :disabled="sending"
               @compositionstart="handleCompositionStart"
               @compositionend="handleCompositionEnd"
               @keydown="handleComposerKeydown"

@@ -8,9 +8,10 @@ import { useConversationPage } from '../logic/ConversationPage'
 import { aboveComposer } from '../../conversation-extras'
 
 const {
-  router, t, conversation, input, sending, chat, error, lookup, sceneStarting, partnerInitial, targetLanguageCode,
+  router, t, conversation, input, sending, chat, newReplyAvailable, error, lookup, sceneStarting, partnerInitial, targetLanguageCode,
   setupMatchesLocale, conversationTitle, send, openLookup, saveMemory, formatDate, handleComposerKeydown,
   handleCompositionStart, handleCompositionEnd, feedbackFor, replayScene, toggleSceneSaved, customizeScene,
+  handleConversationScroll, showLatestReply,
 } = useConversationPage()
 
 // Presentation only: the input grows with the text; the send button squashes when a message leaves.
@@ -38,7 +39,7 @@ watch(sending, (now) => {
       <time class="bk-num">{{ formatDate(conversation.createdAt) }}</time>
     </header>
 
-    <div ref="chat" class="scroll" :aria-busy="sending || sceneStarting">
+    <div ref="chat" class="scroll" :class="{ 'has-new-reply': newReplyAvailable }" :aria-busy="sending || sceneStarting" @scroll.passive="handleConversationScroll">
       <div class="lane">
         <section v-if="conversation.setup && setupMatchesLocale" class="scene">
           <i class="mug" aria-hidden="true"><Face :mood="sceneStarting ? 'wow' : 'calm'" /></i>
@@ -77,11 +78,12 @@ watch(sending, (now) => {
     </div>
 
     <div class="deck">
+      <Transition name="new-reply"><button v-if="newReplyAvailable" type="button" class="new-reply" data-qs-id="qs-new-reply" aria-live="polite" @click="showLatestReply">{{ t('conversation.newReply') }} <span aria-hidden="true">↓</span></button></Transition>
       <div class="deck-in">
         <p v-if="conversation.status === 'archived'" class="deck-note">{{ t('conversation.archivedContinue') }}</p>
         <p v-if="error" class="bk-error" role="alert">{{ error }}</p>
         <component :is="extra" v-for="(extra, at) in aboveComposer" :key="at" :conversation="conversation" />
-        <div class="write" :class="{ busy: sending }">
+        <div class="write">
           <label class="sr" for="conversation-message">{{ t('conversation.openPlaceholder') }}</label>
           <textarea
             id="conversation-message"
@@ -90,7 +92,6 @@ watch(sending, (now) => {
             name="message"
             rows="1"
             autocomplete="off"
-            :disabled="sending"
             @compositionstart="handleCompositionStart"
             @compositionend="handleCompositionEnd"
             @keydown="handleComposerKeydown"
@@ -113,7 +114,8 @@ watch(sending, (now) => {
 .bar h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:19px;font-weight:800;letter-spacing:-.025em}
 .bar time{height:32px;padding:0 14px;display:inline-flex;align-items:center;border-radius:999px;background:var(--paper);font-size:12px;font-weight:700}
 
-.scroll{overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.scroll{overflow-y:auto;overscroll-behavior:contain;scroll-behavior:smooth;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.scroll.has-new-reply{padding-bottom:52px}
 .lane{max-width:800px;margin:0 auto;padding:14px 20px 34px;display:grid;gap:22px}
 
 .scene{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px 16px;padding:22px 24px;border-radius:32px;background:var(--tomato);animation:bk-drop .7s var(--spring) both}
@@ -142,6 +144,8 @@ watch(sending, (now) => {
 .scene .hops i{background:var(--ink)}
 @keyframes hop{to{transform:translateY(-8px)}}
 
+.deck{position:relative}.new-reply{position:absolute;left:50%;top:-36px;z-index:4;min-height:30px;padding:0 13px;border:2px solid var(--ink);border-radius:14px;background:var(--paper);color:var(--ink);box-shadow:4px 4px 0 var(--ink);font-size:12px;font-weight:800;transform:translateX(-50%)}
+.new-reply-enter-active,.new-reply-leave-active{transition:opacity .16s ease,transform .28s var(--spring)}.new-reply-enter-from,.new-reply-leave-to{opacity:0;transform:translate(-50%,8px)}
 .deck-in{max-width:800px;margin:0 auto;padding:4px 20px calc(18px + env(safe-area-inset-bottom));display:grid;gap:8px}
 .deck-note{padding:0 8px;color:var(--soft);font-size:12.5px;font-weight:600;line-height:1.6}
 .write{display:flex;align-items:flex-end;gap:10px;padding:8px 8px 8px 24px;border-radius:32px;background:var(--paper);box-shadow:inset 0 0 0 3px transparent;transition:box-shadow .2s,transform .5s var(--spring)}
@@ -171,5 +175,5 @@ watch(sending, (now) => {
   .deck-in{padding:4px 10px calc(10px + env(safe-area-inset-bottom))}
   .write{padding-left:20px}
 }
-@media (prefers-reduced-motion:reduce){.hops i,.who,.blank i,.scene,.send.squash,.send.squash svg{animation:none}}
+@media (prefers-reduced-motion:reduce){.scroll{scroll-behavior:auto}.hops i,.who,.blank i,.scene,.send.squash,.send.squash svg{animation:none}.new-reply-enter-active,.new-reply-leave-active{transition:opacity .12s}.new-reply-enter-from,.new-reply-leave-to{transform:translateX(-50%)}}
 </style>

@@ -84,7 +84,7 @@ onBeforeUnmount(() => {
 
       <template v-if="shown.length">
         <ul class="y-rows y-wordlist">
-          <li v-for="word in rows" :key="word.id" class="y-word y-fold" :class="{ open: openId === String(word.id) }">
+          <li v-for="word in rows" :key="word.id" class="y-word y-fold" :class="{ open: openId === String(word.id) }" :data-word-id="word.id">
             <button type="button" class="y-row" :class="{ on: openId === String(word.id), busy: localizing === word.id }" :disabled="localizing === word.id" :aria-expanded="openId === String(word.id)" @click="toggle(word)">
               <Icon name="chevron" :size="13" :weight="2.2" class="turn" />
               <b :lang="word.language">{{ word.term }}</b>

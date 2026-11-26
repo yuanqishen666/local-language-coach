@@ -76,6 +76,7 @@ const baseCopy = {
 
   // Conversation and coaching
   'conversation.partnerTyping': row('对方正在输入…', 'Your partner is typing…', 'La otra persona está escribiendo…', 'Votre interlocuteur écrit…', '相手が入力しています…', 'Dein Gegenüber schreibt…', '상대가 입력하고 있어요…', 'L’altra persona sta scrivendo…', 'A outra pessoa está digitando…', 'सामने वाला लिख रहा है…'),
+  'conversation.newReply': row('新回复', 'New reply', 'Nueva respuesta', 'Nouvelle réponse', '新しい返信', 'Neue Antwort', '새 답장', 'Nuova risposta', 'Nova resposta', 'नया जवाब'),
   'conversation.memoriesTitle': row('要记住这些吗？', 'Worth remembering', '¿Quieres guardar esto?', 'À retenir ?', '覚えておきますか？', 'Möchtest du dir das merken?', '기억해 둘까요?', 'Vuoi ricordarlo?', 'Quer guardar isso?', 'क्या इसे याद रखा जाए?'),
   'conversation.confirmRemember': row('确认记住', 'Save to memory', 'Guardar en la memoria', 'Ajouter à la mémoire', '記憶に保存', 'Als Erinnerung speichern', '기억에 저장', 'Salva nella memoria', 'Salvar na memória', 'यादों में सेव करें'),
   'conversation.memoryUpdateTitle': row('更新这条记忆吗？', 'Update this memory?', '¿Actualizar este recuerdo?', 'Mettre à jour ce souvenir ?', 'この記憶を更新しますか？', 'Diese Erinnerung aktualisieren?', '이 기억을 업데이트할까요?', 'Aggiornare questo ricordo?', 'Atualizar esta memória?', 'क्या यह याद अपडेट करनी है?'),

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>不收会员费也不等于零成本</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1242px; height: 1656px; overflow: hidden; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif; background: #3154ff; color: #f7f4ec; }
+    .card { width: 100%; height: 100%; padding: 80px; display: grid; grid-template-rows: auto 1fr auto; position: relative; isolation: isolate; container-type: inline-size; }
+    .card::after { content: ""; position: absolute; left: -180px; bottom: 170px; width: 720px; height: 720px; border: 58px solid rgba(247,244,236,.12); border-radius: 50%; z-index: -1; }
+    header { display: flex; justify-content: space-between; align-items: center; font-size: 29px; font-weight: 760; }
+    .tag { border: 2px solid rgba(247,244,236,.8); border-radius: 999px; padding: 14px 22px; }
+    .content { align-self: center; display: grid; gap: 46px; }
+    h1 { margin: 0; font-size: 118px; line-height: 1.04; letter-spacing: -.05em; font-weight: 950; }
+    h1 .paper { display: inline-block; color: #151515; background: #f7f4ec; padding: 6px 20px 15px; transform: rotate(-1.5deg); box-shadow: 18px 18px 0 #151515; }
+    .sub { max-width: 850px; font-size: 43px; line-height: 1.45; font-weight: 720; }
+    .sub b { color: #fff49a; }
+    footer { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+    footer div { border: 2px solid rgba(247,244,236,.6); border-radius: 28px; padding: 22px; font-size: 30px; font-weight: 760; }
+    footer small { display: block; margin-bottom: 9px; opacity: .72; font-size: 21px; }
+  </style>
+</head>
+<body>
+  <article class="card">
+    <header>
+      <div class="tag">AI 英语陪练</div>
+      <div>备用封面 B</div>
+    </header>
+    <div class="content">
+      <h1><span class="paper">不收会员费</span><br>也不等于<br>零成本</h1>
+      <div class="sub">我把自己做的陪练工具从头走了一遍，<b>门槛不藏在说明书里。</b></div>
+    </div>
+    <footer>
+      <div><small>01</small>产品</div>
+      <div><small>02</small>模型</div>
+      <div><small>03</small>时间</div>
+    </footer>
+  </article>
+</body>
+</html>

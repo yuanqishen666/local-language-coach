@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>钱之外的两个成本</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1242px; height: 1656px; overflow: hidden; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif; background: #fff49a; color: #151515; }
+    .card { width: 100%; height: 100%; padding: 80px 82px 68px; display: grid; grid-template-rows: auto 1fr auto; position: relative; }
+    header { display: flex; justify-content: space-between; align-items: center; font-size: 28px; font-weight: 780; }
+    .content { align-self: center; display: grid; gap: 52px; }
+    h1 { margin: 0; font-size: 95px; line-height: 1.08; letter-spacing: -.05em; font-weight: 940; max-width: 950px; }
+    h1 span { color: #3154ff; }
+    .costs { display: grid; gap: 22px; }
+    .cost { display: grid; grid-template-columns: 150px 1fr auto; align-items: center; gap: 30px; padding: 30px 34px; border: 3px solid #151515; border-radius: 34px; background: #f8f5ee; box-shadow: 10px 10px 0 #151515; }
+    .cost strong { font-size: 108px; line-height: 1; color: #3154ff; }
+    .cost h2 { margin: 0; font-size: 45px; line-height: 1.18; }
+    .cost p { margin: 8px 0 0; font-size: 28px; color: #595a55; }
+    .cost .chip { border-radius: 999px; background: #151515; color: #f8f5ee; padding: 14px 20px; font-size: 24px; font-weight: 780; }
+    footer { display: flex; justify-content: space-between; align-items: center; gap: 30px; border-top: 3px solid #151515; padding-top: 24px; }
+    footer strong { font-size: 35px; }
+    footer span { font-size: 26px; color: #55564f; }
+  </style>
+</head>
+<body>
+  <article class="card">
+    <header><div>没有会员账单以后</div><div>05 / 06</div></header>
+    <div class="content">
+      <h1>钱之外，<br>还有 <span>2 个成本</span></h1>
+      <div class="costs">
+        <div class="cost">
+          <strong>1</strong>
+          <div><h2>在电脑上安装</h2><p>当前不是应用商店一键下载</p></div>
+          <div class="chip">时间</div>
+        </div>
+        <div class="cost">
+          <strong>2</strong>
+          <div><h2>学会配置模型</h2><p>准备密钥，再测试连接</p></div>
+          <div class="chip">精力</div>
+        </div>
+      </div>
+    </div>
+    <footer><strong>想点开就聊？先别用它。</strong><span>这句劝退是真的</span></footer>
+  </article>
+</body>
+</html>
